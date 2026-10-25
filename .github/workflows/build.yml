@@ -1,0 +1,113 @@
+
+
+name: Build & Sign Android App (AAB & APK)
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build & Sign Release AAB and APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Setup Android SDK & Accept Licenses
+        run: |
+          export ANDROID_HOME="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          export ANDROID_SDK_ROOT="$ANDROID_HOME"
+          echo "ANDROID_HOME=$ANDROID_HOME" >> $GITHUB_ENV
+          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> $GITHUB_ENV
+          echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> $GITHUB_PATH
+          echo "$ANDROID_HOME/platform-tools" >> $GITHUB_PATH
+          mkdir -p "$ANDROID_HOME/licenses"
+          # Pre-populate all Android SDK license hashes to eliminate interactive prompts
+          printf "%s\n" \
+            "24333f8a63b6825ea9c5514f83c2829b004d1fee" \
+            "d56f5187479451eabf01fb78af6dfcb131a6481e" \
+            "859f317696f67ef3d7f30a50a5560e7834b43903" >> "$ANDROID_HOME/licenses/android-sdk-license"
+          printf "%s\n" "84831b9409646a918e30573bab4c9c91346d8abd" >> "$ANDROID_HOME/licenses/android-sdk-preview-license"
+          printf "%s\n" "601085b94cd77f0b54ff86406957099ebe79c4d6" >> "$ANDROID_HOME/licenses/android-googletv-license"
+          printf "%s\n" "ceff83576aac4f7f37cb98fe189e9fb3c49d3b81" >> "$ANDROID_HOME/licenses/android-googlexr-license"
+          printf "%s\n" "859f317696f67ef3d7f30a50a5560e7834b43903" >> "$ANDROID_HOME/licenses/android-sdk-arm-dbt-license"
+          printf "%s\n" "33b6a2b64607f11b759f320ef9dff4ae5c47d97a" >> "$ANDROID_HOME/licenses/google-gdk-license"
+          printf "%s\n" "e9acab5b5fbb560a72cfaecce8946896ff6aab9d" >> "$ANDROID_HOME/licenses/mips-android-sysimage-license"
+          # Ensure all licenses are confirmed non-interactively
+          if [ -f "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" ]; then
+            yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses 2>/dev/null || true
+          elif which sdkmanager > /dev/null 2>&1; then
+            yes | sdkmanager --licenses 2>/dev/null || true
+          fi
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 9.3.1
+          validate-wrappers: false
+
+      - name: Setup Keystore for Signing
+        id: setup-keystore
+        run: |
+          if [ -n "${{ secrets.KEYSTORE_BASE64 }}" ]; then
+            echo "Using base64 keystore from GitHub Secrets..."
+            echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > release.keystore
+            echo "KEYSTORE_PATH=$GITHUB_WORKSPACE/release.keystore" >> $GITHUB_ENV
+          elif [ -f "my-upload-key.jks" ]; then
+            echo "Using my-upload-key.jks from repository..."
+            echo "KEYSTORE_PATH=$GITHUB_WORKSPACE/my-upload-key.jks" >> $GITHUB_ENV
+          else
+            echo "Generating production release keystore with alias upload..."
+            keytool -genkeypair -v \
+              -keystore release.keystore \
+              -alias "${KEY_ALIAS}" \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -storepass "${STORE_PASSWORD}" \
+              -keypass "${KEY_PASSWORD}" \
+              -dname "CN=JobsReport, OU=App, O=JobsReport, L=Dar es Salaam, ST=Dar es Salaam, C=TZ"
+            echo "KEYSTORE_PATH=$GITHUB_WORKSPACE/release.keystore" >> $GITHUB_ENV
+          fi
+        env:
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS || 'upload' }}
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD || secrets.KEYSTORE_PASSWORD || '52775277Tanzania' }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD || '52775277Tanzania' }}
+
+      - name: Build Release Bundle (AAB), Release APK & Debug APK
+        run: gradle bundleRelease assembleRelease assembleDebug --stacktrace
+        env:
+          KEYSTORE_PATH: ${{ env.KEYSTORE_PATH }}
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD || secrets.KEYSTORE_PASSWORD || '52775277Tanzania' }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS || 'upload' }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD || '52775277Tanzania' }}
+
+      - name: Upload Signed Play Store Bundle (.AAB)
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-release-aab
+          path: app/build/outputs/bundle/release/app-release.aab
+          if-no-files-found: error
+
+      - name: Upload Signed Release APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-release-apk
+          path: app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: warn
+
+      - name: Upload Debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-debug-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: warn

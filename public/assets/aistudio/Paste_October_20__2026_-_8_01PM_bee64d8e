@@ -1,0 +1,1558 @@
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { useParams, Link, useNavigate } from 'react-router-dom';
+import SEO from '../components/SEO';
+import VerifiedBadge from '../components/VerifiedBadge';
+import { useUserAuth } from '../context/UserAuthContext';
+import {
+  X, Plus, Share2, Eye, Trash2, Calendar, Clock,
+  ChevronLeft, ChevronRight, RefreshCw,
+  AlertCircle, Image as ImageIcon, Type, Loader2
+} from 'lucide-react';
+
+// ============================================================
+// AUTH TOKEN STORAGE (kept in sync with UserAuthContext)
+// ============================================================
+const TOKEN_KEY = 'jobsreport_token';
+
+const getToken = (): string | null => {
+  try { return localStorage.getItem(TOKEN_KEY); } catch { return null; }
+};
+
+export const getUserToken = getToken;
+
+// ============================================================
+// TYPES
+// ============================================================
+export interface StoryUser {
+  id: string;
+  name: string;
+  username?: string | null;
+  email?: string;
+  profile_image_url?: string | null;
+  is_verified?: number;
+}
+
+export interface StoryType {
+  id: string;
+  user_id: string;
+  slug: string;
+  type: 'image' | 'text';
+  media_url: string | null;
+  media_thumb?: string | null;
+  text_content: string | null;
+  background_style: string | null;
+  created_at: string;
+  expires_at: string;
+  is_active?: number;
+  views_count?: number;
+  user?: StoryUser;
+}
+
+export interface CreateStoryPayload {
+  type: 'image' | 'text';
+  media_url?: string | null;
+  media_thumb?: string | null;
+  text_content?: string | null;
+  background_style?: string | null;
+  expires_at: string;
+}
+
+// ============================================================
+// CONSTANTS
+// ============================================================
+const STORY_BACKGROUNDS = [
+  'linear-gradient(135deg, #1877F2, #0055FF)',
+  'linear-gradient(135deg, #F3425F, #E41E3F)',
+  'linear-gradient(135deg, #45BD62, #31A24C)',
+  'linear-gradient(135deg, #F7B928, #E3A300)',
+  'linear-gradient(135deg, #A033FF, #7B1FA2)',
+  'linear-gradient(135deg, #FF7E5F, #FEB47B)',
+  'linear-gradient(135deg, #00C6FF, #0072FF)',
+  'linear-gradient(135deg, #2193b0, #6dd5ed)',
+  'linear-gradient(135deg, #42275a, #734b6d)',
+  'linear-gradient(135deg, #000000, #434343)',
+];
+
+const DEFAULT_STORY_DURATION_MS = 5000;
+const THUMB_MAX_DIMENSION = 400;
+const THUMB_QUALITY = 0.8;
+
+// ============================================================
+// HELPERS
+// ============================================================
+const parseServerTime = (value?: string): number => {
+  const s = String(value ?? '').trim();
+  if (!s) return Date.now();
+  if (/[zZ]|[+-]\d{2}:?\d{2}$/.test(s)) {
+    const t = Date.parse(s);
+    return Number.isFinite(t) ? t : Date.now();
+  }
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/.test(s)) {
+    const iso = s.replace(' ', 'T') + 'Z';
+    const t = Date.parse(iso);
+    return Number.isFinite(t) ? t : Date.now();
+  }
+  const t = Date.parse(s);
+  return Number.isFinite(t) ? t : Date.now();
+};
+
+const formatStoryTime = (created_at?: string): string => {
+  const t = parseServerTime(created_at);
+  const diff = Date.now() - t;
+  if (diff < 60_000) return 'Just now';
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}min`;
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}hrs`;
+  return `${Math.floor(diff / 86_400_000)}days`;
+};
+
+const fmtCount = (n: number) => {
+  const num = Number(n || 0);
+  if (num >= 1_000_000) return (num / 1_000_000).toFixed(1) + 'M';
+  if (num >= 1_000) return (num / 1_000).toFixed(1) + 'K';
+  return String(num);
+};
+
+const getDefaultAvatar = (name: string, seed: string | number) => {
+  const colors = ['1877F2', '45BD62', 'F3425F', 'F7B928', '9360F7'];
+  const hash = String(seed).split('').reduce((a, c) => a + c.charCodeAt(0), 0);
+  const c = colors[Math.abs(hash) % colors.length];
+  const init = (name || 'U').slice(0, 1).toUpperCase();
+  return `https://ui-avatars.com/api/?name=${encodeURIComponent(init)}&background=${c}&color=fff&size=128&bold=true&rounded=true`;
+};
+
+const isExpired = (story: StoryType): boolean => {
+  if (story.is_active === 0 || story.is_active === (false as any)) return true;
+  if (!story.expires_at) return false;
+  return parseServerTime(story.expires_at) < Date.now();
+};
+
+// ============================================================
+// CLIENT-SIDE THUMBNAIL GENERATION
+// ============================================================
+const generateThumbnail = async (file: File): Promise<File | null> => {
+  try {
+    const objectUrl = URL.createObjectURL(file);
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const i = new Image();
+      i.onload = () => resolve(i);
+      i.onerror = () => reject(new Error('Image load failed'));
+      i.src = objectUrl;
+    });
+    URL.revokeObjectURL(objectUrl);
+
+    const scale = Math.min(1, THUMB_MAX_DIMENSION / Math.max(img.width, img.height));
+    const w = Math.max(1, Math.round(img.width * scale));
+    const h = Math.max(1, Math.round(img.height * scale));
+
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+    ctx.drawImage(img, 0, 0, w, h);
+
+    const blob: Blob | null = await new Promise((resolve) => {
+      canvas.toBlob((b) => resolve(b), 'image/webp', THUMB_QUALITY);
+    });
+
+    if (!blob) return null;
+
+    const baseName = file.name.replace(/\.[^.]+$/, '');
+    return new File([blob], `${baseName}-thumb.webp`, { type: 'image/webp' });
+  } catch (err) {
+    console.warn('[thumbnail] generation failed:', err);
+    return null;
+  }
+};
+
+// ============================================================
+// LINKIFY
+// ============================================================
+const URL_REGEX = /((?:https?:\/\/|www\.)[^\s<>"']+|[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,})/gi;
+
+export const Linkify: React.FC<{ text: string; className?: string }> = ({ text, className }) => {
+  const parts = useMemo(() => {
+    const out: Array<{ type: 'text' | 'link'; value: string; href?: string }> = [];
+    let lastIndex = 0;
+    const safe = String(text ?? '');
+    safe.replace(URL_REGEX, (match, _g1, offset: number) => {
+      if (offset > lastIndex) {
+        out.push({ type: 'text', value: safe.slice(lastIndex, offset) });
+      }
+      const isEmail = /^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$/i.test(match);
+      const href = isEmail
+        ? `mailto:${match}`
+        : match.startsWith('http')
+          ? match
+          : `https://${match}`;
+      out.push({ type: 'link', value: match, href });
+      lastIndex = offset + match.length;
+      return match;
+    });
+    if (lastIndex < safe.length) {
+      out.push({ type: 'text', value: safe.slice(lastIndex) });
+    }
+    return out;
+  }, [text]);
+
+  return (
+    <span className={className}>
+      {parts.map((p, i) =>
+        p.type === 'link' ? (
+          <a
+            key={i}
+            href={p.href}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-blue-300 underline underline-offset-2 hover:text-blue-200 break-all"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {p.value}
+          </a>
+        ) : (
+          <React.Fragment key={i}>{p.value}</React.Fragment>
+        )
+      )}
+    </span>
+  );
+};
+
+// ============================================================
+// API HELPERS
+// ============================================================
+const apiFetch = async (url: string, options: RequestInit = {}) => {
+  const token = getToken();
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...(options.headers as Record<string, string> | undefined),
+  };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+
+  const res = await fetch(url, { ...options, headers });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error((data as any)?.error || `Request failed (${res.status})`);
+  }
+  return data;
+};
+
+// ============================================================
+// STORY VIEWER — full screen
+// ============================================================
+interface StoryViewerProps {
+  story: StoryType;
+  user: StoryUser;
+  currentUser: StoryUser | null;
+  onClose: () => void;
+  onNext?: () => void;
+  onPrev?: () => void;
+  allStories?: StoryType[];
+  onProfileClick?: (id: string) => void;
+  onDeleteStory?: (storyId: string) => Promise<void> | void;
+  deleteLoading?: boolean;
+  onViewRecorded?: (storyId: string) => void;
+}
+
+export const StoryViewer: React.FC<StoryViewerProps> = ({
+  story,
+  user,
+  currentUser,
+  onClose,
+  onNext,
+  onPrev,
+  allStories = [],
+  onProfileClick,
+  onDeleteStory,
+  deleteLoading = false,
+  onViewRecorded,
+}) => {
+  const navigate = useNavigate();
+  const [progress, setProgress] = useState(0);
+  const [isPaused, setIsPaused] = useState(false);
+  const [mediaReady, setMediaReady] = useState(false);
+  const [originalLoaded, setOriginalLoaded] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deletingStory, setDeletingStory] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const progressIntervalRef = useRef<number | null>(null);
+  const lastNavAtRef = useRef(0);
+  const didAdvanceRef = useRef(false);
+  const pointerDownRef = useRef<{ x: number; y: number; t: number } | null>(null);
+  const viewRecordedRef = useRef<string | null>(null);
+
+  const isAuthor = !!currentUser && String(currentUser.id) === String(user.id);
+
+  const handleProfileClick = useCallback(() => {
+    if (onProfileClick) {
+      onProfileClick(user.id);
+    } else {
+      navigate(`/u/${user.id}`);
+    }
+  }, [onProfileClick, user.id, navigate]);
+
+  const userStories = useMemo(() => {
+    const src = allStories.length ? allStories : [story];
+    return src
+      .filter((s) => String(s.user_id) === String(story.user_id))
+      .slice()
+      .sort((a, b) => parseServerTime(b.created_at) - parseServerTime(a.created_at));
+  }, [allStories, story]);
+
+  const currentIndex = userStories.findIndex((s) => String(s.id) === String(story.id));
+
+  const storyIsText = story.type === 'text';
+  const originalUrl = story.media_url || '';
+  const thumbUrl = story.media_thumb || originalUrl;
+  const displayUrl = originalLoaded && originalUrl ? originalUrl : thumbUrl;
+
+  useEffect(() => {
+    if (viewRecordedRef.current === story.id) return;
+    viewRecordedRef.current = story.id;
+    apiFetch(`/api/stories/${encodeURIComponent(story.id)}/view`, { method: 'POST' })
+      .then(() => onViewRecorded?.(story.id))
+      .catch(() => {});
+  }, [story.id, onViewRecorded]);
+
+  useEffect(() => {
+    didAdvanceRef.current = false;
+    setProgress(0);
+    setMediaReady(storyIsText);
+    setOriginalLoaded(false);
+    if (progressIntervalRef.current) {
+      clearInterval(progressIntervalRef.current);
+      progressIntervalRef.current = null;
+    }
+  }, [story.id, storyIsText]);
+
+  useEffect(() => {
+    if (storyIsText || !thumbUrl) {
+      setMediaReady(true);
+      return;
+    }
+    const img = new Image();
+    img.src = thumbUrl;
+    const done = () => setMediaReady(true);
+    if (img.complete) done();
+    else {
+      img.onload = done;
+      img.onerror = done;
+    }
+  }, [story.id, storyIsText, thumbUrl]);
+
+  useEffect(() => {
+    if (storyIsText || !originalUrl || originalUrl === thumbUrl) return;
+    const img = new Image();
+    img.src = originalUrl;
+    const done = () => setOriginalLoaded(true);
+    if (img.complete) done();
+    else {
+      img.onload = done;
+    }
+  }, [story.id, storyIsText, originalUrl, thumbUrl]);
+
+  const safeNavigate = useCallback((dir: 'next' | 'prev') => {
+    const now = Date.now();
+    if (now - lastNavAtRef.current < 600) return;
+    lastNavAtRef.current = now;
+    if (dir === 'next' && onNext) onNext();
+    else if (dir === 'prev' && onPrev) onPrev();
+  }, [onNext, onPrev]);
+
+  useEffect(() => {
+    if (!mediaReady) return;
+    setProgress(0);
+    didAdvanceRef.current = false;
+
+    const tickMs = 50;
+    const duration = DEFAULT_STORY_DURATION_MS;
+
+    if (progressIntervalRef.current) clearInterval(progressIntervalRef.current);
+
+    progressIntervalRef.current = window.setInterval(() => {
+      if (isPaused) return;
+      setProgress((prev) => {
+        if (prev >= 100) return 100;
+        const next = Math.min(100, prev + (100 / (duration / tickMs)));
+        if (next >= 100 && !didAdvanceRef.current) {
+          didAdvanceRef.current = true;
+          safeNavigate('next');
+        }
+        return next;
+      });
+    }, tickMs);
+
+    return () => {
+      if (progressIntervalRef.current) {
+        clearInterval(progressIntervalRef.current);
+        progressIntervalRef.current = null;
+      }
+    };
+  }, [story.id, isPaused, mediaReady, safeNavigate]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'ArrowRight' || e.key === ' ') { e.preventDefault(); safeNavigate('next'); }
+      else if (e.key === 'ArrowLeft') { e.preventDefault(); safeNavigate('prev'); }
+      else if (e.key === 'Escape') { e.preventDefault(); onClose(); }
+      else if (e.key === 'p' || e.key === 'P') { e.preventDefault(); setIsPaused((p) => !p); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [safeNavigate, onClose]);
+
+  const isInteractiveTarget = (el: EventTarget | null) => {
+    const node = el as HTMLElement | null;
+    if (!node) return false;
+    return !!node.closest('button,a,input,textarea,select,[role="button"],[data-no-nav="true"]');
+  };
+
+  const handlePointerDown = (e: React.PointerEvent) => {
+    if (isInteractiveTarget(e.target)) return;
+    pointerDownRef.current = { x: e.clientX, y: e.clientY, t: Date.now() };
+  };
+
+  const handlePointerUp = (e: React.PointerEvent) => {
+    const start = pointerDownRef.current;
+    pointerDownRef.current = null;
+    if (!start) return;
+    if (isInteractiveTarget(e.target)) return;
+
+    const dx = e.clientX - start.x;
+    const dy = e.clientY - start.y;
+    const dt = Date.now() - start.t;
+
+    if (Math.abs(dx) > 40 && Math.abs(dy) < 28) {
+      if (dx < 0) safeNavigate('next'); else safeNavigate('prev');
+      return;
+    }
+    const TAP_MOVE = 12;
+    const TAP_TIME = 350;
+    if (Math.abs(dx) <= TAP_MOVE && Math.abs(dy) <= TAP_MOVE && dt <= TAP_TIME) {
+      const box = (e.currentTarget as HTMLElement).getBoundingClientRect();
+      const ratio = (e.clientX - box.left) / box.width;
+      if (ratio < 0.35) safeNavigate('prev');
+      else if (ratio > 0.65) safeNavigate('next');
+      else setIsPaused((p) => !p);
+    }
+  };
+
+  const handleShare = async () => {
+    const url = `${window.location.origin}/story/${story.slug}`;
+    const shareData = {
+      title: story.text_content?.slice(0, 80) || `${user.name}'s Story`,
+      text: story.text_content?.slice(0, 160) || `Check out this story on JobsReport`,
+      url,
+    };
+    if (navigator.share) {
+      try { await navigator.share(shareData); return; } catch {}
+    }
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      window.prompt('Copy this link:', url);
+    }
+  };
+
+  const handleDeleteStory = async () => {
+    if (!onDeleteStory || !isAuthor) return;
+    setDeletingStory(true);
+    try {
+      await onDeleteStory(story.id);
+      setShowDeleteConfirm(false);
+      setTimeout(() => onClose(), 250);
+    } catch (err) {
+      console.error('Delete failed:', err);
+    } finally {
+      setDeletingStory(false);
+    }
+  };
+
+  const totalViews = story.views_count || 0;
+
+  return (
+    <div className="fixed inset-0 z-[250] bg-[#050B18] flex items-center justify-center animate-fade-in">
+      <button
+        className="absolute top-4 right-4 z-[300] w-10 h-10 flex items-center justify-center bg-[#0F172A]/80 hover:bg-[#1E293B] border border-[#1E293B] rounded-full transition-colors"
+        onClick={(e) => { e.stopPropagation(); onClose(); }}
+        aria-label="Close"
+      >
+        <X size={20} className="text-[#F8FAFC]" />
+      </button>
+
+      <div
+        className="relative w-full h-full max-w-[480px] bg-[#0B1120] sm:rounded-2xl sm:border sm:border-[#1E293B] sm:shadow-2xl overflow-hidden flex flex-col touch-none"
+        style={{ touchAction: 'none', overscrollBehavior: 'contain' }}
+        onPointerDown={handlePointerDown}
+        onPointerUp={handlePointerUp}
+      >
+        <button
+          type="button"
+          aria-label="Previous"
+          className="absolute left-2 top-1/2 -translate-y-1/2 z-[120] w-10 h-10 rounded-full bg-white/10 hover:bg-white/15 backdrop-blur-md flex items-center justify-center"
+          onClick={(e) => { e.stopPropagation(); safeNavigate('prev'); }}
+          onPointerDown={(e) => e.stopPropagation()}
+        >
+          <ChevronLeft size={20} className="text-white/90" />
+        </button>
+        <button
+          type="button"
+          aria-label="Next"
+          className="absolute right-2 top-1/2 -translate-y-1/2 z-[120] w-10 h-10 rounded-full bg-white/10 hover:bg-white/15 backdrop-blur-md flex items-center justify-center"
+          onClick={(e) => { e.stopPropagation(); safeNavigate('next'); }}
+          onPointerDown={(e) => e.stopPropagation()}
+        >
+          <ChevronRight size={20} className="text-white/90" />
+        </button>
+
+        <div className="absolute top-0 left-0 right-0 pt-2 px-3 z-30 flex gap-1.5">
+          {userStories.map((_, i) => (
+            <div key={i} className="h-1 bg-white/20 flex-1 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-white transition-all duration-75 ease-linear"
+                style={{
+                  width: i < currentIndex ? '100%' : i === currentIndex ? `${progress}%` : '0%',
+                }}
+              />
+            </div>
+          ))}
+        </div>
+
+        <div
+          className="absolute top-0 left-0 right-0 px-4 pt-6 pb-4 z-30 flex items-center justify-between bg-gradient-to-b from-[#0B1120]/90 via-[#0B1120]/40 to-transparent"
+          data-no-nav="true"
+        >
+          <button
+            onClick={(e) => { e.stopPropagation(); handleProfileClick(); }}
+            className="flex items-center gap-3 hover:opacity-90 transition-opacity"
+            aria-label={`View ${user.name}'s profile`}
+          >
+            <img
+              src={user.profile_image_url || getDefaultAvatar(user.name, user.id)}
+              alt={user.name}
+              className="w-12 h-12 rounded-full border-2 border-[#1877F2] object-cover shadow-lg"
+            />
+            <div className="flex flex-col items-start">
+              <span className="text-white font-bold text-[17px] drop-shadow-md flex items-center gap-1.5">
+                {user.name}
+                {user.is_verified === 1 && <VerifiedBadge size={14} />}
+              </span>
+              <span className="text-white/70 text-[12px] drop-shadow-md">
+                {formatStoryTime(story.created_at)}
+              </span>
+            </div>
+          </button>
+
+          <div className="flex gap-2">
+            <button
+              onClick={(e) => { e.stopPropagation(); handleShare(); }}
+              className="w-10 h-10 flex items-center justify-center bg-white/10 hover:bg-white/15 rounded-full"
+              aria-label="Share story"
+              title={copied ? 'Link copied!' : 'Share'}
+            >
+              {copied ? <AlertCircle size={18} className="text-emerald-400" /> : <Share2 size={18} className="text-white/80" />}
+            </button>
+            {isAuthor && onDeleteStory && (
+              <button
+                onClick={(e) => { e.stopPropagation(); setShowDeleteConfirm(true); }}
+                className="w-10 h-10 flex items-center justify-center bg-[#F3425F]/80 hover:bg-[#F3425F] rounded-full"
+                aria-label="Delete story"
+                disabled={deletingStory}
+              >
+                <Trash2 size={18} className="text-white/90" />
+              </button>
+            )}
+          </div>
+        </div>
+
+        <div className="flex-1 bg-[#0B1120] relative">
+          <div className="absolute inset-0 z-[10] flex items-center justify-center">
+            {storyIsText ? (
+              <div
+                className="w-full h-full flex items-center justify-center p-10 text-center"
+                style={{ background: story.background_style || '#0B1120' }}
+              >
+                <div
+                  className="text-white font-bold text-3xl sm:text-4xl drop-shadow-[0_2px_4px_rgba(0,0,0,0.5)] whitespace-pre-wrap break-words max-w-full"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <Linkify text={story.text_content || ''} />
+                </div>
+              </div>
+            ) : displayUrl ? (
+              <img
+                src={displayUrl}
+                alt="Story"
+                className={`w-full h-full object-contain transition-opacity duration-300 ${
+                  originalLoaded ? 'opacity-100' : 'opacity-95'
+                }`}
+                onLoad={() => setMediaReady(true)}
+                onError={() => setMediaReady(true)}
+              />
+            ) : (
+              <div className="w-full h-full flex items-center justify-center">
+                <span className="text-white/50 text-sm">Media unavailable</span>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div
+          className="absolute bottom-0 left-0 right-0 p-3 pb-6 z-20 bg-gradient-to-t from-[#0B1120] via-[#0B1120]/80 to-transparent pt-10"
+          data-no-nav="true"
+        >
+          <div className="flex items-center justify-between px-2">
+            <div className="flex items-center gap-2 text-white/80">
+              <Eye size={18} />
+              <span className="text-[15px] font-semibold">{fmtCount(totalViews)}</span>
+              <span className="text-[13px] text-white/60">
+                {totalViews === 1 ? 'view' : 'views'}
+              </span>
+            </div>
+            <button
+              onClick={(e) => { e.stopPropagation(); handleShare(); }}
+              className="flex items-center gap-1.5 h-10 px-3 rounded-lg hover:bg-white/10 transition-all"
+              aria-label="Share"
+            >
+              <Share2 size={18} className="text-white" />
+              <span className="text-[14px] font-semibold text-white">Share</span>
+            </button>
+          </div>
+        </div>
+
+        {showDeleteConfirm && (
+          <div className="absolute inset-0 z-[500] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="w-full max-w-[400px] bg-[#0F172A] rounded-2xl border border-[#1E293B] shadow-2xl overflow-hidden">
+              <div className="flex items-center justify-between px-4 py-3 border-b border-[#1E293B]">
+                <div className="flex items-center gap-2">
+                  <Trash2 size={16} className="text-[#F3425F]" />
+                  <h3 className="text-white font-bold text-base">Delete Story</h3>
+                </div>
+                <button
+                  onClick={() => setShowDeleteConfirm(false)}
+                  className="w-9 h-9 rounded-full bg-white/10 hover:bg-white/15 flex items-center justify-center"
+                  disabled={deletingStory}
+                >
+                  <X size={16} className="text-white/80" />
+                </button>
+              </div>
+              <div className="p-6">
+                <p className="text-white font-bold text-center text-lg mb-2">Delete this story?</p>
+                <p className="text-white/60 text-center text-sm mb-6">
+                  This story will be permanently deleted. This action cannot be undone.
+                </p>
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => setShowDeleteConfirm(false)}
+                    className="flex-1 py-3 rounded-xl bg-white/10 hover:bg-white/15 text-white font-bold transition-all"
+                    disabled={deletingStory}
+                  >Cancel</button>
+                  <button
+                    onClick={handleDeleteStory}
+                    className="flex-1 py-3 rounded-xl bg-[#F3425F] hover:bg-[#E41E3F] text-white font-bold transition-all flex items-center justify-center gap-2"
+                    disabled={deletingStory || deleteLoading}
+                  >
+                    {deletingStory || deleteLoading ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
+                    Delete
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+// ============================================================
+// Story Bubble Content
+// ============================================================
+const StoryBubbleContent: React.FC<{
+  story?: StoryType | null;
+  fallbackName?: string;
+  fallbackAvatar?: string | null;
+  fallbackSeed?: string | number;
+}> = ({ story, fallbackName = 'User', fallbackAvatar, fallbackSeed = 'anon' }) => {
+  if (story) {
+    const thumb = story.media_thumb || '';
+    if (story.type === 'text' && !thumb) {
+      return (
+        <div
+          className="w-full h-full flex items-center justify-center text-[8px] font-black text-white px-1 text-center leading-tight"
+          style={{ background: story.background_style || '#0B1120' }}
+        >
+          {(story.text_content || '').slice(0, 14)}
+        </div>
+      );
+    }
+    if (thumb) {
+      return (
+        <img
+          src={thumb}
+          alt=""
+          className="w-full h-full object-cover"
+          loading="lazy"
+        />
+      );
+    }
+    return (
+      <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-blue-600 to-violet-600 text-white">
+        <ImageIcon size={18} />
+      </div>
+    );
+  }
+
+  return (
+    <img
+      src={fallbackAvatar || getDefaultAvatar(fallbackName, fallbackSeed)}
+      alt={fallbackName}
+      className="w-full h-full object-cover"
+      onError={(e) => {
+        (e.currentTarget as HTMLImageElement).src = getDefaultAvatar(fallbackName, fallbackSeed);
+      }}
+    />
+  );
+};
+
+// ============================================================
+// STORY REEL
+// ============================================================
+interface StoryReelProps {
+  stories: StoryType[];
+  onProfileClick: (id: string) => void;
+  onCreateStory?: () => void;
+  onViewStory: (story: StoryType) => void;
+  currentUser: StoryUser | null;
+  onRequestLogin: () => void;
+  loading?: boolean;
+}
+
+export const StoryReel: React.FC<StoryReelProps> = ({
+  stories,
+  onProfileClick,
+  onCreateStory,
+  onViewStory,
+  currentUser,
+  onRequestLogin,
+  loading = false,
+}) => {
+  const navigate = useNavigate();
+
+  const handleProfileClick = useCallback((id: string) => {
+    if (onProfileClick) onProfileClick(id);
+    else navigate(`/u/${id}`);
+  }, [onProfileClick, navigate]);
+
+  const active = useMemo(() => stories.filter((s) => !isExpired(s)), [stories]);
+
+  const uniqueUsers = useMemo(() => {
+    const seen = new Set<string>();
+    const out: StoryType[] = [];
+    const sorted = [...active].sort(
+      (a, b) => parseServerTime(b.created_at) - parseServerTime(a.created_at)
+    );
+    const meId = String(currentUser?.id || '');
+    const mine = sorted.filter((s) => String(s.user_id) === meId);
+    const others = sorted.filter((s) => String(s.user_id) !== meId);
+    if (mine[0]) out.push(mine[0]);
+    for (const s of others) {
+      if (seen.has(String(s.user_id))) continue;
+      seen.add(String(s.user_id));
+      out.push(s);
+    }
+    return out;
+  }, [active, currentUser?.id]);
+
+  return (
+    <div className="w-full bg-[#0F172A] border-b-[8px] border-[#050B18] py-3.5 px-3 overflow-x-auto flex gap-2.5 scrollbar-hide">
+      <div
+        className="min-w-[110px] sm:min-w-[135px] h-[200px] sm:h-[240px] bg-[#0F172A] rounded-2xl shadow-sm overflow-hidden cursor-pointer relative group flex-shrink-0 border border-[#1E293B]"
+        onClick={() => (currentUser ? onCreateStory?.() : onRequestLogin())}
+        role="button"
+        tabIndex={0}
+      >
+        <img
+          src={
+            currentUser?.profile_image_url ||
+            getDefaultAvatar(currentUser?.name || 'User', currentUser?.id || 'anon')
+          }
+          alt="Create"
+          className="h-[75%] w-full object-cover group-hover:scale-105 transition-transform duration-500 opacity-80"
+        />
+        <div className="absolute bottom-0 w-full h-[25%] bg-[#0F172A] flex flex-col items-center justify-end pb-2.5">
+          <div className="absolute -top-5 w-10 h-10 flex items-center justify-center">
+            <div className="relative w-10 h-10">
+              <div className="absolute inset-0 bg-gradient-to-tr from-[#166FE5] to-[#1877F2] rounded-full border-4 border-[#0F172A] text-white shadow-md flex items-center justify-center">
+                <Plus size={16} />
+              </div>
+              {loading && (
+                <div className="absolute inset-[-3px] rounded-full border-[3px] border-white/15 border-t-[#38BDF8] border-r-[#1877F2] animate-spin" />
+              )}
+            </div>
+          </div>
+          <span className="text-[11px] font-bold text-[#F8FAFC] mt-4">Create Story</span>
+        </div>
+      </div>
+
+      {uniqueUsers.map((story) => {
+        const author = story.user || {
+          id: story.user_id,
+          name: 'User',
+          profile_image_url: getDefaultAvatar('User', story.user_id),
+        };
+        const isText = story.type === 'text';
+        const thumb = story.media_thumb || '';
+        const isMine = currentUser && String(currentUser.id) === String(story.user_id);
+
+        return (
+          <div
+            key={story.id}
+            className="min-w-[110px] sm:min-w-[140px] h-[210px] sm:h-[250px] relative rounded-2xl overflow-hidden cursor-pointer flex-shrink-0 group shadow-lg border border-[#1E293B]"
+            onClick={() => onViewStory(story)}
+            role="button"
+            tabIndex={0}
+          >
+            {isText ? (
+              <div
+                className="absolute w-full h-full flex items-center justify-center p-3 text-center"
+                style={{ background: story.background_style || '#0B1120' }}
+              >
+                <span className="text-white font-bold text-[10px] line-clamp-4 leading-tight">
+                  {story.text_content}
+                </span>
+              </div>
+            ) : thumb ? (
+              <img
+                src={thumb}
+                alt="Story"
+                className="absolute w-full h-full object-cover group-hover:scale-110 transition-transform duration-700"
+                loading="lazy"
+              />
+            ) : (
+              <div className="absolute w-full h-full bg-gradient-to-br from-blue-600 to-sky-500 flex items-center justify-center">
+                <ImageIcon size={28} className="text-white" />
+              </div>
+            )}
+
+            <div className="absolute inset-0 bg-black/20 group-hover:bg-black/10 transition-colors" />
+
+            <button
+              className="absolute top-3 left-3 w-9 h-9 rounded-full border-4 border-[#1877F2] overflow-hidden z-10 shadow-md"
+              onClick={(e) => { e.stopPropagation(); handleProfileClick(story.user_id); }}
+              aria-label={`Go to ${author.name}'s profile`}
+            >
+              <img
+                src={author.profile_image_url || getDefaultAvatar(author.name, author.id)}
+                alt=""
+                className="w-full h-full object-cover"
+              />
+            </button>
+
+            {isMine && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onCreateStory?.();
+                }}
+                className="absolute top-3 right-3 w-7 h-7 rounded-full flex items-center justify-center z-20 border-[2.5px] border-[#0B1120]"
+                style={{
+                  background:
+                    'linear-gradient(135deg, #1877F2 0%, #7B4DFF 60%, #A033FF 100%)',
+                }}
+                aria-label="Add another story"
+              >
+                <Plus size={12} strokeWidth={3.5} className="text-white" />
+              </button>
+            )}
+
+            <p className="absolute bottom-3 left-3 text-white font-bold text-xs drop-shadow-md truncate w-[85%] flex items-center gap-1">
+              <span className="truncate">{isMine ? 'Your Story' : author.name}</span>
+              {author.is_verified === 1 && <VerifiedBadge size={10} />}
+            </p>
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
+// ============================================================
+// CREATE STORY MODAL
+// ============================================================
+interface CreateStoryModalProps {
+  currentUser: StoryUser;
+  onClose: () => void;
+  onCreate: (payload: CreateStoryPayload) => Promise<void> | void;
+}
+
+export const CreateStoryModal: React.FC<CreateStoryModalProps> = ({
+  currentUser,
+  onClose,
+  onCreate,
+}) => {
+  const [mode, setMode] = useState<'text' | 'image'>('text');
+  const [text, setText] = useState('');
+  const [background, setBackground] = useState(STORY_BACKGROUNDS[0]);
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [imageThumb, setImageThumb] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const defaultDeadline = useMemo(() => {
+    const d = new Date();
+    d.setDate(d.getDate() + 7);
+    return d.toISOString().split('T')[0];
+  }, []);
+  const [deadline, setDeadline] = useState(defaultDeadline);
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const canShare =
+    (mode === 'text' && text.trim().length > 0) ||
+    (mode === 'image' && !!imageUrl);
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.currentTarget.value = '';
+    if (!file) return;
+
+    if (!file.type.startsWith('image/')) {
+      setError('Please select an image file');
+      return;
+    }
+    if (file.size > 8 * 1024 * 1024) {
+      setError('Image must be under 8MB');
+      return;
+    }
+
+    setError(null);
+    setUploading(true);
+    try {
+      const thumbFile = await generateThumbnail(file);
+
+      const fd = new FormData();
+      fd.append('file', file);
+      if (thumbFile) fd.append('thumbnail', thumbFile);
+      fd.append('name', file.name);
+      fd.append('altText', `Story by ${currentUser.name}`);
+
+      const res = await fetch('/api/upload', { method: 'POST', body: fd });
+      const data = await res.json().catch(() => null);
+
+      if (!res.ok) {
+        throw new Error(data?.error || 'Upload failed');
+      }
+
+      const url = data?.url || data?.dataUrl;
+      const thumb = data?.thumbnail_url || url;
+
+      if (!url) throw new Error('No URL returned from upload');
+
+      setImageUrl(url);
+      setImageThumb(thumb);
+      setMode('image');
+    } catch (err: any) {
+      setError(err?.message || 'Upload failed');
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleCreate = async () => {
+    if (!canShare || creating) return;
+    setCreating(true);
+    setError(null);
+
+    try {
+      const expiresIso = new Date(deadline + 'T23:59:59').toISOString();
+
+      const payload: CreateStoryPayload = {
+        type: mode,
+        text_content: mode === 'text' ? text.trim() : null,
+        background_style: mode === 'text' ? background : null,
+        media_url: mode === 'image' ? imageUrl : null,
+        media_thumb: mode === 'image' ? imageThumb : null,
+        expires_at: expiresIso,
+      };
+
+      await onCreate(payload);
+      onClose();
+    } catch (err: any) {
+      setError(err?.message || 'Failed to create story');
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[200] bg-[#050B18] flex flex-col text-white overflow-hidden animate-fade-in">
+      <div className="flex justify-between items-center p-4 bg-[#0B1120] border-b border-[#1E293B]">
+        <button
+          onClick={onClose}
+          className="text-white font-bold text-sm bg-[#1E293B] px-4 py-2 rounded-full hover:bg-[#141E33] border border-[#1E293B] transition-all"
+        >
+          Discard
+        </button>
+        <h3 className="font-black text-[18px]">Create Story</h3>
+        <button
+          onClick={handleCreate}
+          disabled={!canShare || creating || uploading}
+          className="bg-[#1877F2] text-white px-6 py-2 rounded-full font-black text-sm disabled:opacity-50 disabled:bg-gray-600 transition-all"
+        >
+          {creating ? <Loader2 size={16} className="animate-spin inline" /> : 'Share'}
+        </button>
+      </div>
+
+      <div
+        className="flex-1 flex items-center justify-center relative overflow-hidden"
+        style={{ background: mode === 'text' ? background : '#050B18' }}
+      >
+        {mode === 'text' ? (
+          <textarea
+            autoFocus
+            placeholder="Share your job story... (links welcome)"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            className="bg-transparent text-white text-2xl sm:text-3xl font-bold text-center w-full max-w-lg outline-none resize-none placeholder-white/40 px-8 h-[40vh]"
+          />
+        ) : imageUrl ? (
+          <div className="relative w-full h-full">
+            <img src={imageUrl} alt="Story" className="w-full h-full object-contain" />
+            <button
+              onClick={() => { setImageUrl(null); setImageThumb(null); }}
+              className="absolute top-4 left-4 w-10 h-10 bg-black/50 rounded-full flex items-center justify-center text-white hover:bg-black/70"
+              aria-label="Remove image"
+            >
+              <Trash2 size={18} />
+            </button>
+          </div>
+        ) : (
+          <div
+            className="text-center cursor-pointer group"
+            onClick={() => fileInputRef.current?.click()}
+          >
+            <div className="w-20 h-20 bg-[#0F172A] border border-[#1E293B] rounded-full flex items-center justify-center mx-auto mb-4 group-hover:bg-[#1E293B] transition-all">
+              {uploading ? <Loader2 size={28} className="text-white animate-spin" /> : <ImageIcon size={28} className="text-white" />}
+            </div>
+            <p className="font-black text-xl text-white">
+              {uploading ? 'Processing…' : 'Select an Image'}
+            </p>
+            <p className="text-white/60 text-sm mt-2">
+              JPG, PNG, WEBP — max 8MB
+            </p>
+          </div>
+        )}
+
+        <input
+          type="file"
+          ref={fileInputRef}
+          className="hidden"
+          accept="image/*"
+          onChange={handleFileUpload}
+        />
+      </div>
+
+      <div className="bg-[#0B1120] border-t border-[#1E293B] p-4 flex flex-col gap-4">
+        {mode === 'text' && (
+          <div className="flex gap-3 overflow-x-auto scrollbar-hide px-2 py-1">
+            {STORY_BACKGROUNDS.map((col, idx) => (
+              <button
+                key={idx}
+                onClick={() => setBackground(col)}
+                className={`w-9 h-9 rounded-full flex-shrink-0 border-2 transition-transform hover:scale-110 ${
+                  background === col ? 'border-white scale-110 shadow-[0_0_15px_rgba(255,255,255,0.3)]' : 'border-transparent'
+                }`}
+                style={{ background: col }}
+                aria-label={`Background ${idx + 1}`}
+              />
+            ))}
+          </div>
+        )}
+
+        <div className="flex items-center justify-between gap-3 px-2 py-2 rounded-2xl bg-[#070D1D] border border-[#1E293B]">
+          <div className="flex items-center gap-2 text-white/80">
+            <Calendar size={16} />
+            <span className="text-sm font-bold">Deadline</span>
+          </div>
+          <input
+            type="date"
+            value={deadline}
+            min={new Date().toISOString().split('T')[0]}
+            onChange={(e) => setDeadline(e.target.value)}
+            className="bg-[#0F172A] border border-[#1E293B] text-white text-sm rounded-xl px-3 py-2 outline-none focus:border-[#1877F2]"
+          />
+        </div>
+
+        <div className="flex items-center justify-between px-2">
+          <div className="flex gap-2 bg-[#070D1D] p-1 rounded-2xl border border-[#1E293B]">
+            <button
+              onClick={() => setMode('text')}
+              className={`px-5 py-2.5 rounded-xl text-sm font-black transition-all flex items-center gap-2 ${
+                mode === 'text' ? 'bg-[#1877F2] text-white shadow-lg' : 'text-white/60'
+              }`}
+            >
+              <Type size={14} /> Text
+            </button>
+            <button
+              onClick={() => setMode('image')}
+              className={`px-5 py-2.5 rounded-xl text-sm font-black transition-all flex items-center gap-2 ${
+                mode === 'image' ? 'bg-[#1877F2] text-white shadow-lg' : 'text-white/60'
+              }`}
+            >
+              <ImageIcon size={14} /> Image
+            </button>
+          </div>
+
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploading}
+            className="w-12 h-12 rounded-full flex items-center justify-center transition-all bg-white/10 text-white/80 hover:bg-white/20"
+            aria-label="Add image"
+          >
+            <Plus size={18} />
+          </button>
+        </div>
+
+        {error && (
+          <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-red-500/10 border border-red-500/20">
+            <AlertCircle size={14} className="text-red-400 shrink-0" />
+            <p className="text-xs text-red-400">{error}</p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+// ============================================================
+// PUBLIC STORY PAGE — SEO page + clickable → opens StoryViewer
+// ============================================================
+export const PublicStoryPage: React.FC = () => {
+  const { slug } = useParams<{ slug: string }>();
+  const navigate = useNavigate();
+  const { user: authUser } = useUserAuth();
+
+  const [story, setStory] = useState<StoryType | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [notFound, setNotFound] = useState(false);
+  const [viewerOpen, setViewerOpen] = useState(false);
+
+  const currentUser: StoryUser | null = authUser
+    ? {
+        id: String(authUser.id),
+        name: authUser.name || authUser.username || 'User',
+        username: authUser.username || null,
+        email: authUser.email,
+        profile_image_url: authUser.profile_image_url || null,
+        is_verified: (authUser as any).is_verified || 0,
+      }
+    : null;
+
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      setLoading(true);
+      try {
+        if (!slug) { setNotFound(true); return; }
+        const data = await apiFetch(`/api/stories/${encodeURIComponent(slug)}`);
+        if (cancelled) return;
+        if (!data || data.error) { setNotFound(true); return; }
+        setStory(data);
+      } catch {
+        if (!cancelled) setNotFound(true);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+    load();
+    return () => { cancelled = true; };
+  }, [slug]);
+
+  if (loading) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[60vh] space-y-4">
+        <RefreshCw size={24} className="text-blue-500 animate-spin" />
+        <span className="text-[10px] font-mono text-gray-500 tracking-widest uppercase">Loading Story...</span>
+      </div>
+    );
+  }
+
+  if (notFound || !story) {
+    return (
+      <>
+        <SEO
+          title="Story Not Found | JobsReport"
+          description="This story may have expired or been removed."
+        />
+        <div className="text-center py-20">
+          <h2 className="text-2xl font-bold text-white mb-4">Story Not Found</h2>
+          <p className="text-gray-400 mb-6">This story may have expired or been removed.</p>
+          <Link to="/" className="text-blue-500 hover:underline font-bold uppercase tracking-wider text-sm">
+            ← Back to Home
+          </Link>
+        </div>
+      </>
+    );
+  }
+
+  const storyUrl = `https://jobsreport.online/story/${story.slug}`;
+  const authorName = story.user?.name || 'User';
+  const authorId = story.user_id;
+  const title = story.text_content?.slice(0, 70) || `${authorName}'s Story`;
+  const description = story.text_content?.slice(0, 160) || `Job story shared by ${authorName} on JobsReport.`;
+  const image = story.media_url || story.media_thumb || undefined;
+
+  const articleSchema = {
+    '@context': 'https://schema.org',
+    '@type': 'SocialMediaPosting',
+    headline: title,
+    articleBody: story.text_content || '',
+    datePublished: story.created_at,
+    dateModified: story.created_at,
+    url: storyUrl,
+    image: image || undefined,
+    author: {
+      '@type': 'Person',
+      name: authorName,
+      url: `https://jobsreport.online/u/${authorId}`,
+    },
+    publisher: {
+      '@type': 'Organization',
+      name: 'JobsReport',
+      url: 'https://jobsreport.online',
+      logo: {
+        '@type': 'ImageObject',
+        url: 'https://jobsreport.online/favicon.ico',
+      },
+    },
+    interactionStatistic: {
+      '@type': 'InteractionCounter',
+      interactionType: 'https://schema.org/ViewAction',
+      userInteractionCount: story.views_count || 0,
+    },
+  };
+
+  // Author object for StoryViewer
+  const viewingUser: StoryUser = story.user || {
+    id: story.user_id,
+    name: authorName,
+    profile_image_url: getDefaultAvatar(authorName, story.user_id),
+    is_verified: 0,
+  };
+
+  return (
+    <>
+      <SEO
+        title={`${title} | Story by ${authorName} | JobsReport`}
+        description={description}
+        canonicalUrl={storyUrl}
+        ogTitle={title}
+        ogDescription={description}
+        ogUrl={storyUrl}
+        ogImage={image}
+        ogType="article"
+        twitterCard="summary_large_image"
+        twitterImage={image}
+        structuredData={articleSchema}
+      />
+
+      <div className="max-w-2xl mx-auto px-4 py-10 space-y-6">
+        {/* Author block → UserProfile */}
+        <Link
+          to={`/u/${authorId}`}
+          className="flex items-center gap-3 hover:opacity-90 transition-opacity group w-fit"
+        >
+          <img
+            src={story.user?.profile_image_url || getDefaultAvatar(authorName, story.user_id)}
+            alt={authorName}
+            className="w-12 h-12 rounded-full border-2 border-blue-500 object-cover"
+          />
+          <div>
+            <p className="text-white font-bold group-hover:text-[#4A9EFF] transition-colors flex items-center gap-1.5">
+              {authorName}
+              {story.user?.is_verified === 1 && <VerifiedBadge size={16} />}
+            </p>
+            <p className="text-xs text-gray-500">{formatStoryTime(story.created_at)}</p>
+          </div>
+        </Link>
+
+        {/* ─── CLICKABLE STORY PREVIEW → OPENS FULL-SCREEN VIEWER ─── */}
+        <button
+          type="button"
+          onClick={() => setViewerOpen(true)}
+          className="block w-full text-left rounded-3xl overflow-hidden border border-white/5 bg-white/[0.01] hover:border-[#1877F2]/40 transition-all group relative focus:outline-none focus:ring-2 focus:ring-[#1877F2]/40"
+          aria-label="Open full-screen story viewer"
+        >
+          {story.type === 'text' ? (
+            <div
+              className="p-10 text-center min-h-[300px] flex items-center justify-center"
+              style={{ background: story.background_style || '#0B1120' }}
+            >
+              <div className="text-white font-bold text-2xl sm:text-3xl leading-snug whitespace-pre-wrap break-words">
+                <Linkify text={story.text_content || ''} />
+              </div>
+            </div>
+          ) : (
+            <div className="relative">
+              <img
+                src={story.media_thumb || story.media_url || ''}
+                alt="Story preview"
+                className="w-full max-h-[70vh] object-contain bg-black"
+                loading="lazy"
+              />
+              {/* Hover overlay */}
+              <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors flex items-center justify-center pointer-events-none">
+                <div className="opacity-0 group-hover:opacity-100 transition-opacity bg-white/20 backdrop-blur-md rounded-full p-5 border border-white/30">
+                  <Eye size={32} className="text-white" />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* "Tap to view" bar */}
+          <div className="px-4 py-3 bg-white/[0.02] border-t border-white/5 flex items-center justify-between">
+            <span className="text-[11px] font-bold text-gray-400 uppercase tracking-wider flex items-center gap-1.5">
+              <Eye size={12} className="text-[#4A9EFF]" />
+              Tap to view full story
+            </span>
+            <span className="text-[10px] text-gray-500 font-mono">
+              {fmtCount(story.views_count || 0)} views
+            </span>
+          </div>
+        </button>
+
+        {/* Meta */}
+        <div className="flex items-center justify-between text-sm text-gray-500">
+          <div className="flex items-center gap-2">
+            <Eye size={16} />
+            <span>{fmtCount(story.views_count || 0)} views</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Clock size={16} />
+            <span>Expires {new Date(story.expires_at).toLocaleDateString()}</span>
+          </div>
+        </div>
+
+        {/* CTA buttons */}
+        <div className="flex gap-3">
+          <button
+            onClick={() => navigate('/')}
+            className="flex-1 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-sm uppercase tracking-wider transition-colors"
+          >
+            Explore Jobs
+          </button>
+          <button
+            onClick={async () => {
+              if (navigator.share) {
+                try { await navigator.share({ title, url: storyUrl }); } catch {}
+              } else {
+                await navigator.clipboard.writeText(storyUrl);
+                alert('Link copied!');
+              }
+            }}
+            className="px-6 py-3 rounded-xl bg-white/5 hover:bg-white/10 text-white font-bold text-sm uppercase tracking-wider transition-colors flex items-center gap-2"
+          >
+            <Share2 size={16} /> Share
+          </button>
+        </div>
+      </div>
+
+      {/* ─── FULL-SCREEN VIEWER ─── */}
+      {viewerOpen && (
+        <StoryViewer
+          story={story}
+          user={viewingUser}
+          currentUser={currentUser}
+          allStories={[story]}
+          onClose={() => setViewerOpen(false)}
+          onViewRecorded={(id) => {
+            setStory((prev) =>
+              prev && prev.id === id
+                ? { ...prev, views_count: (prev.views_count || 0) + 1 }
+                : prev
+            );
+          }}
+          onProfileClick={(id) => navigate(`/u/${id}`)}
+        />
+      )}
+    </>
+  );
+};
+
+// ============================================================
+// MAIN PAGE — Story feed (/stories route)
+// ============================================================
+export default function StoryPage() {
+  const { user: authUser } = useUserAuth();
+  const navigate = useNavigate();
+
+  const currentUser: StoryUser | null = authUser
+    ? {
+        id: String(authUser.id),
+        name: authUser.name || authUser.username || 'User',
+        username: authUser.username || null,
+        email: authUser.email,
+        profile_image_url: authUser.profile_image_url || null,
+        is_verified: (authUser as any).is_verified || 0,
+      }
+    : null;
+
+  const [stories, setStories] = useState<StoryType[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [viewingStory, setViewingStory] = useState<StoryType | null>(null);
+
+  const loadStories = useCallback(async () => {
+    try {
+      const data = await apiFetch('/api/stories');
+      const list = Array.isArray(data?.stories) ? data.stories : Array.isArray(data) ? data : [];
+      setStories(list.filter((s: StoryType) => !isExpired(s)));
+    } catch (err) {
+      console.error('Failed to load stories:', err);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadStories();
+  }, [loadStories]);
+
+  const handleCreate = async (payload: CreateStoryPayload) => {
+    await apiFetch('/api/stories', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+    await loadStories();
+  };
+
+  const handleDelete = async (storyId: string) => {
+    await apiFetch(`/api/stories/${encodeURIComponent(storyId)}`, { method: 'DELETE' });
+    setStories((prev) => prev.filter((s) => s.id !== storyId));
+  };
+
+  const handleViewRecorded = (storyId: string) => {
+    setStories((prev) =>
+      prev.map((s) =>
+        s.id === storyId ? { ...s, views_count: (s.views_count || 0) + 1 } : s
+      )
+    );
+  };
+
+  const viewingUser: StoryUser | null = viewingStory
+    ? viewingStory.user || {
+        id: viewingStory.user_id,
+        name: 'User',
+        profile_image_url: getDefaultAvatar('User', viewingStory.user_id),
+        is_verified: 0,
+      }
+    : null;
+
+  return (
+    <>
+      <SEO
+        title="Job Stories | JobsReport"
+        description="Real job success stories and career insights shared by the JobsReport community."
+      />
+
+      <div className="max-w-5xl mx-auto px-4 py-6 space-y-8">
+        <div>
+          <h1 className="text-3xl font-black text-white mb-2">Job Stories</h1>
+          <p className="text-gray-400 text-sm">
+            Real stories from job seekers and professionals. Share yours.
+          </p>
+        </div>
+
+        <StoryReel
+          stories={stories}
+          loading={loading}
+          onProfileClick={(id) => navigate(`/u/${id}`)}
+          onCreateStory={() => setCreateOpen(true)}
+          onViewStory={(s) => setViewingStory(s)}
+          currentUser={currentUser}
+          onRequestLogin={() => navigate('/login')}
+        />
+
+        {stories.length === 0 && !loading && (
+          <div className="text-center py-16 text-gray-500 text-sm font-mono">
+            No active stories yet. Be the first to share one.
+          </div>
+        )}
+
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          {stories.map((s) => (
+            <button
+              key={s.id}
+              onClick={() => setViewingStory(s)}
+              className="relative aspect-[9/16] rounded-2xl overflow-hidden border border-white/5 bg-white/[0.01] hover:border-blue-500/30 transition-all text-left"
+            >
+              {s.type === 'text' ? (
+                <div
+                  className="absolute inset-0 p-3 flex items-center justify-center text-center"
+                  style={{ background: s.background_style || '#0B1120' }}
+                >
+                  <span className="text-white text-xs font-bold line-clamp-6">
+                    {s.text_content}
+                  </span>
+                </div>
+              ) : (
+                <img
+                  src={s.media_thumb || s.media_url || ''}
+                  alt=""
+                  className="absolute inset-0 w-full h-full object-cover"
+                  loading="lazy"
+                />
+              )}
+              <div className="absolute bottom-0 left-0 right-0 p-2 bg-gradient-to-t from-black/80 to-transparent">
+                <p className="text-white text-[10px] font-bold truncate flex items-center gap-1">
+                  <span className="truncate">{s.user?.name || 'User'}</span>
+                  {s.user?.is_verified === 1 && <VerifiedBadge size={9} />}
+                </p>
+                <p className="text-white/60 text-[9px] flex items-center gap-1">
+                  <Eye size={9} /> {fmtCount(s.views_count || 0)}
+                </p>
+              </div>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {createOpen && currentUser && (
+        <CreateStoryModal
+          currentUser={currentUser}
+          onClose={() => setCreateOpen(false)}
+          onCreate={handleCreate}
+        />
+      )}
+
+      {viewingStory && viewingUser && (
+        <StoryViewer
+          story={viewingStory}
+          user={viewingUser}
+          currentUser={currentUser}
+          allStories={stories}
+          onClose={() => setViewingStory(null)}
+          onNext={() => {
+            const idx = stories.findIndex((s) => s.id === viewingStory.id);
+            const next = stories[idx + 1];
+            if (next) setViewingStory(next);
+            else setViewingStory(null);
+          }}
+          onPrev={() => {
+            const idx = stories.findIndex((s) => s.id === viewingStory.id);
+            const prev = stories[idx - 1];
+            if (prev) setViewingStory(prev);
+            else setViewingStory(null);
+          }}
+          onProfileClick={(id) => navigate(`/u/${id}`)}
+          onDeleteStory={handleDelete}
+          onViewRecorded={handleViewRecorded}
+        />
+      )}
+    </>
+  );
+}

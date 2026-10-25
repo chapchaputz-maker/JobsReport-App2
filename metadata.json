@@ -1,0 +1,8 @@
+{
+  "name": " JobsReport-App1",
+  "description": "Real-Time Jobs platform for Employers and Job Seekers with verified listings, regional feeds, and job market intelligence.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

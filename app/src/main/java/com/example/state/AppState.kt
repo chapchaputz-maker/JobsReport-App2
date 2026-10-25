@@ -1,0 +1,1923 @@
+package com.example.state
+
+import android.app.Application
+import android.content.Context
+import android.net.Uri
+import com.example.util.ImageCompressor
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
+import com.example.api.JobsReportApi
+import com.example.data.Company
+import com.example.data.Country
+import com.example.data.JobCategory
+import com.example.data.JobOpportunity
+import com.example.data.LocationInfo
+import com.example.data.MarketReport
+import com.example.data.NotificationItem
+import com.example.data.defaultCountriesList
+import com.example.data.sampleCompanies
+import com.example.data.sampleJobCategories
+import com.example.data.sampleJobOpportunities
+import com.example.data.sampleLocations
+import com.example.data.sampleMarketReports
+import com.example.data.sampleNotifications
+import com.example.data.sampleSpotlightCompanies
+import com.example.data.CreateStoryPayload
+import com.example.data.StoriesResponse
+import com.example.data.StoryType
+import com.example.data.StoryUser
+import com.example.data.UploadResponse
+import com.example.data.getDefaultStoryAvatar
+import com.example.data.isStoryExpired
+import com.example.data.isUserVerified
+import com.example.data.AppNotification
+import com.example.data.NotificationActor
+import com.example.data.getDefaultNotificationAvatar
+import com.example.data.formatNotificationRelativeTime
+import com.example.data.parseNotificationTimeMs
+import com.squareup.moshi.Moshi
+import com.squareup.moshi.Types
+import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.MultipartBody
+import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONObject
+import org.json.JSONArray
+
+enum class NavRoute(val title: String, val routePath: String) {
+    INTELLIGENCE_FEED("Intelligence Feed", "/"),
+    ALL_JOBS("All Jobs List", "/jobs"),
+    SAVED_JOBS("Saved Jobs", "/saved-jobs"),
+    COMPANIES("Companies", "/companies"),
+    REGIONS("Regions", "/regions"),
+    JOB_REPORTS("All Job Reports", "/reports"),
+    ADMIN_STUDIO("Admin Studio", "/admin"),
+    JOB_DETAIL("Job Details", "/job-detail"),
+    CATEGORY_JOBS("Category Jobs", "/category"),
+    REPORT_DETAIL("Report Detail", "/report-detail"),
+    REGION_DETAIL("Region Detail", "/region-detail"),
+    ABOUT_US("About Us", "/about-us"),
+    DISCLAIMER("Disclaimer", "/disclaimer"),
+    PRIVACY_POLICY("Privacy Policy", "/privacy-policy"),
+    STORIES("Job Stories", "/stories"),
+    USER_AUTH("Account / Sign In", "/auth"),
+    USER_PROFILE("User Profile", "/profile"),
+    USER_JOB_INPUT("Post a Job", "/post-job"),
+    NOTIFICATIONS("Notifications", "/notifications")
+}
+
+class AppViewModel(application: Application) : AndroidViewModel(application) {
+    private val api = JobsReportApi.create { cleanUserToken }
+    private val prefs = application.getSharedPreferences("jobsreport_prefs", Context.MODE_PRIVATE)
+
+    private val moshi = Moshi.Builder().addLast(KotlinJsonAdapterFactory()).build()
+    private val savedJobsType = Types.newParameterizedType(List::class.java, JobOpportunity::class.java)
+    private val savedJobsAdapter = moshi.adapter<List<JobOpportunity>>(savedJobsType)
+
+    private val storyListType = Types.newParameterizedType(List::class.java, StoryType::class.java)
+    private val storyListAdapter = moshi.adapter<List<StoryType>>(storyListType)
+    private val storiesResponseAdapter = moshi.adapter(StoriesResponse::class.java)
+    private val uploadResponseAdapter = moshi.adapter(UploadResponse::class.java)
+
+    var currentRoute by mutableStateOf(NavRoute.INTELLIGENCE_FEED)
+    var selectedJob by mutableStateOf<JobOpportunity?>(null)
+
+    // Story & Community Intel State (exact parity with Story.tsx)
+    var stories by mutableStateOf<List<StoryType>>(emptyList())
+        private set
+    var isStoriesLoading by mutableStateOf(false)
+        private set
+    var viewingStory by mutableStateOf<StoryType?>(null)
+    var isCreateStoryOpen by mutableStateOf(false)
+    var isUserProfileModalOpen by mutableStateOf(false)
+    var isUserAuthModalOpen by mutableStateOf(false)
+
+    // Story Draft preservation across Auth flows
+    var storyDraftText by mutableStateOf("")
+    var storyDraftBg by mutableStateOf(com.example.data.STORY_BACKGROUNDS[0])
+    var storyDraftImageUri by mutableStateOf<android.net.Uri?>(null)
+    var storyDraftUploadedUrl by mutableStateOf<String?>(null)
+    var storyDraftUploadedThumb by mutableStateOf<String?>(null)
+    var storyDraftMode by mutableStateOf("text")
+    var storyDraftDeadline by mutableStateOf("")
+
+    fun saveStoryDraft(
+        text: String,
+        bg: String,
+        imageUri: android.net.Uri?,
+        uploadedUrl: String?,
+        uploadedThumb: String?,
+        mode: String,
+        deadline: String
+    ) {
+        storyDraftText = text
+        storyDraftBg = bg
+        storyDraftImageUri = imageUri
+        storyDraftUploadedUrl = uploadedUrl
+        storyDraftUploadedThumb = uploadedThumb
+        storyDraftMode = mode
+        storyDraftDeadline = deadline
+    }
+
+    fun clearStoryDraft() {
+        storyDraftText = ""
+        storyDraftBg = com.example.data.STORY_BACKGROUNDS[0]
+        storyDraftImageUri = null
+        storyDraftUploadedUrl = null
+        storyDraftUploadedThumb = null
+        storyDraftMode = "text"
+        storyDraftDeadline = ""
+    }
+
+    // User Session State (exact sync with jobsreport_token)
+    var userToken by mutableStateOf<String?>(null)
+        private set
+    var currentUser by mutableStateOf<StoryUser?>(null)
+        private set
+    var viewingProfileUser by mutableStateOf<StoryUser?>(null)
+    val followedUserIds = mutableStateListOf<String>()
+
+    // Real server-verified user status & profile cache
+    val verifiedUsersMap = mutableStateMapOf<String, Boolean>()
+    val userProfilesCache = mutableStateMapOf<String, StoryUser>()
+
+    private val pendingProfileFetches = java.util.Collections.synchronizedSet(mutableSetOf<String>())
+
+    fun isUserVerified(userId: String, fallbackUser: StoryUser? = null): Boolean {
+        if (userId.isBlank()) return false
+        verifiedUsersMap[userId]?.let { return it }
+        val cached = userProfilesCache[userId]
+        if (cached != null) {
+            val v = cached.isUserVerified
+            verifiedUsersMap[userId] = v
+            return v
+        }
+        if (fallbackUser != null && fallbackUser.isVerified != null) {
+            val v = fallbackUser.isUserVerified
+            verifiedUsersMap[userId] = v
+            return v
+        }
+        // Fetch live from server just as UserProfile does
+        ensureUserProfileLoaded(userId)
+        return false
+    }
+
+    fun getResolvedUser(userId: String, fallbackUser: StoryUser? = null): StoryUser {
+        if (userId.isBlank()) {
+            return fallbackUser ?: StoryUser(
+                id = "",
+                name = "User",
+                profileImageUrl = getDefaultStoryAvatar("User", "anon")
+            )
+        }
+        val cached = userProfilesCache[userId]
+        if (cached != null) return cached
+        ensureUserProfileLoaded(userId)
+        return fallbackUser ?: StoryUser(
+            id = userId,
+            name = "User",
+            profileImageUrl = getDefaultStoryAvatar("User", userId)
+        )
+    }
+
+    fun ensureUserProfileLoaded(userId: String) {
+        if (userId.isBlank() || userProfilesCache.containsKey(userId) || pendingProfileFetches.contains(userId)) return
+        pendingProfileFetches.add(userId)
+        viewModelScope.launch {
+            try {
+                val user = fetchUserProfile(userId)
+                if (user != null) {
+                    withContext(Dispatchers.Main) {
+                        userProfilesCache[userId] = user
+                        verifiedUsersMap[userId] = user.isUserVerified
+                    }
+                }
+            } finally {
+                pendingProfileFetches.remove(userId)
+            }
+        }
+    }
+
+    fun isUserFollowed(userId: String): Boolean = followedUserIds.contains(userId)
+
+    fun toggleFollowUser(userId: String): Boolean {
+        return if (followedUserIds.contains(userId)) {
+            followedUserIds.remove(userId)
+            false
+        } else {
+            followedUserIds.add(userId)
+            true
+        }
+    }
+
+    fun openUserProfile(user: StoryUser? = null) {
+        viewingProfileUser = user
+        isMobileMenuOpen = false
+        currentRoute = NavRoute.USER_PROFILE
+    }
+
+    fun openUserProfileById(userId: String) {
+        val foundUser = stories.firstOrNull { it.userId == userId }?.user
+            ?: if (currentUser?.id == userId) currentUser
+            else StoryUser(
+                id = userId,
+                name = "User",
+                username = "user_${userId.takeLast(4)}",
+                profileImageUrl = getDefaultStoryAvatar("User", userId)
+            )
+        openUserProfile(foundUser)
+    }
+
+    var editingJob by mutableStateOf<JobOpportunity?>(null)
+    var jobInputReturnRoute by mutableStateOf<NavRoute?>(null)
+
+    fun openPostJob(returnRoute: NavRoute? = currentRoute) {
+        if (userToken == null) {
+            openAuth()
+            return
+        }
+        editingJob = null
+        jobInputReturnRoute = returnRoute
+        isMobileMenuOpen = false
+        currentRoute = NavRoute.USER_JOB_INPUT
+    }
+
+    fun openEditJob(job: JobOpportunity, returnRoute: NavRoute? = currentRoute) {
+        if (userToken == null) {
+            openAuth()
+            return
+        }
+        editingJob = job
+        jobInputReturnRoute = returnRoute
+        isMobileMenuOpen = false
+        currentRoute = NavRoute.USER_JOB_INPUT
+    }
+
+    // Saved / Bookmarked Jobs State (Offline memory / lightweight local storage)
+    val savedJobs = mutableStateListOf<JobOpportunity>()
+
+    val savedJobsCount: Int
+        get() = savedJobs.size
+
+    fun isJobSaved(jobId: String): Boolean {
+        return savedJobs.any { it.id == jobId }
+    }
+
+    fun toggleSaveJob(job: JobOpportunity): Boolean {
+        val existingIndex = savedJobs.indexOfFirst { it.id == job.id }
+        val isNowSaved = if (existingIndex >= 0) {
+            savedJobs.removeAt(existingIndex)
+            false
+        } else {
+            savedJobs.add(0, job)
+            true
+        }
+        persistSavedJobs()
+        return isNowSaved
+    }
+
+    fun removeSavedJob(jobId: String) {
+        savedJobs.removeAll { it.id == jobId }
+        persistSavedJobs()
+    }
+
+    fun clearAllSavedJobs() {
+        savedJobs.clear()
+        persistSavedJobs()
+    }
+
+    private fun loadSavedJobs() {
+        val json = prefs.getString("saved_jobs_json", null)
+        if (!json.isNullOrBlank()) {
+            try {
+                val list = savedJobsAdapter.fromJson(json)
+                if (!list.isNullOrEmpty()) {
+                    savedJobs.clear()
+                    savedJobs.addAll(list)
+                }
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    private fun persistSavedJobs() {
+        try {
+            val json = savedJobsAdapter.toJson(savedJobs.toList())
+            prefs.edit().putString("saved_jobs_json", json).apply()
+        } catch (_: Exception) {
+        }
+    }
+
+    fun selectJob(job: JobOpportunity) {
+        selectedJob = job
+        currentRoute = NavRoute.JOB_DETAIL
+    }
+
+    // Country state
+    var selectedCountry by mutableStateOf(prefs.getString("selected_country", "Worldwide") ?: "Worldwide")
+    var countrySearchQuery by mutableStateOf("")
+    val countries = defaultCountriesList
+
+    val currentFlag: String
+        get() {
+            if (selectedCountry.lowercase() == "worldwide") return "🌍"
+            return countries.find { it.name.equals(selectedCountry, ignoreCase = true) }?.flag ?: "🌍"
+        }
+
+    // Home / Market Feed Data
+    var isDataLoading by mutableStateOf(false)
+        private set
+
+    var categories by mutableStateOf<List<JobCategory>>(sampleJobCategories)
+        private set
+
+    var activeJobs by mutableStateOf<List<JobOpportunity>>(sampleJobOpportunities)
+        private set
+
+    var reports by mutableStateOf<List<MarketReport>>(sampleMarketReports)
+        private set
+
+    var spotlightCompanies by mutableStateOf<List<String>>(sampleSpotlightCompanies)
+        private set
+
+    var companies by mutableStateOf<List<Company>>(sampleCompanies)
+        private set
+
+    var selectedCompany by mutableStateOf<Company?>(null)
+    var selectedCompanyJobs by mutableStateOf<List<JobOpportunity>>(emptyList())
+    var isCompanyJobsLoading by mutableStateOf(false)
+
+    // Category Jobs State
+    var selectedCategoryName by mutableStateOf<String?>(null)
+    var categoryJobs by mutableStateOf<List<JobOpportunity>>(emptyList())
+    var isCategoryJobsLoading by mutableStateOf(false)
+
+    // Report Detail State
+    var selectedReportDetail by mutableStateOf<MarketReport?>(null)
+    var isReportDetailLoading by mutableStateOf(false)
+
+    // Region / Location State
+    var locations by mutableStateOf<List<LocationInfo>>(sampleLocations)
+    var isLocationsLoading by mutableStateOf(false)
+    var selectedRegionName by mutableStateOf<String?>(null)
+    var selectedRegionLocationInfo by mutableStateOf<LocationInfo?>(null)
+
+    fun selectRegion(regionName: String, locationInfo: LocationInfo? = null) {
+        selectedRegionName = regionName
+        selectedRegionLocationInfo = locationInfo ?: locations.find {
+            it.name.equals(regionName, ignoreCase = true) ||
+            it.region?.equals(regionName, ignoreCase = true) == true
+        }
+        currentRoute = NavRoute.REGION_DETAIL
+    }
+
+    fun fetchLocations() {
+        viewModelScope.launch {
+            isLocationsLoading = true
+            try {
+                withContext(Dispatchers.IO) {
+                    val res = runCatching { api.getLocations() }.getOrNull()
+                    if (!res.isNullOrEmpty()) {
+                        withContext(Dispatchers.Main) {
+                            locations = res
+                        }
+                    }
+                }
+            } catch (_: Exception) {
+            } finally {
+                isLocationsLoading = false
+            }
+        }
+    }
+
+    fun selectReport(report: MarketReport) {
+        selectedReportDetail = report
+        currentRoute = NavRoute.REPORT_DETAIL
+        fetchReportDetail(report)
+    }
+
+    private fun fetchReportDetail(report: MarketReport) {
+        val targetSlug = report.slug ?: report.id
+        viewModelScope.launch {
+            isReportDetailLoading = true
+            try {
+                withContext(Dispatchers.IO) {
+                    val detail = runCatching { api.getReportDetail(targetSlug) }.getOrNull()
+                    if (detail != null) {
+                        withContext(Dispatchers.Main) {
+                            selectedReportDetail = detail
+                        }
+                    }
+                }
+            } catch (_: Exception) {
+                // Keep initial report if network fetch fails
+            } finally {
+                isReportDetailLoading = false
+            }
+        }
+    }
+
+    fun selectCategory(categoryName: String) {
+        selectedCategoryName = categoryName
+        currentRoute = NavRoute.CATEGORY_JOBS
+        fetchCategoryJobs(categoryName)
+    }
+
+    private fun fetchCategoryJobs(categoryName: String) {
+        viewModelScope.launch {
+            isCategoryJobsLoading = true
+            try {
+                withContext(Dispatchers.IO) {
+                    val res = runCatching { api.getCategoryJobs(categoryName) }.getOrNull()
+                    val fetched = res?.jobs
+                    withContext(Dispatchers.Main) {
+                        if (fetched != null && fetched.isNotEmpty()) {
+                            categoryJobs = fetched
+                        } else {
+                            // Fallback filtering from activeJobs
+                            categoryJobs = activeJobs.filter { job ->
+                                job.jobCategory?.contains(categoryName, ignoreCase = true) == true ||
+                                job.role?.contains(categoryName, ignoreCase = true) == true ||
+                                job.title.contains(categoryName, ignoreCase = true)
+                            }
+                        }
+                    }
+                }
+            } catch (_: Exception) {
+                categoryJobs = activeJobs.filter { job ->
+                    job.jobCategory?.contains(categoryName, ignoreCase = true) == true ||
+                    job.role?.contains(categoryName, ignoreCase = true) == true ||
+                    job.title.contains(categoryName, ignoreCase = true)
+                }
+            } finally {
+                isCategoryJobsLoading = false
+            }
+        }
+    }
+
+    fun selectCompany(company: Company?) {
+        selectedCompany = company
+        if (company != null) {
+            fetchCompanyJobs(company)
+        } else {
+            selectedCompanyJobs = emptyList()
+        }
+    }
+
+    private fun fetchCompanyJobs(company: Company) {
+        viewModelScope.launch {
+            isCompanyJobsLoading = true
+            try {
+                withContext(Dispatchers.IO) {
+                    val companyJobsResult = runCatching { api.getCompanyJobs(company.id) }.getOrNull()
+                    withContext(Dispatchers.Main) {
+                        if (companyJobsResult != null && companyJobsResult.isNotEmpty()) {
+                            selectedCompanyJobs = companyJobsResult
+                        } else {
+                            // Fallback: filter activeJobs matching company name
+                            selectedCompanyJobs = activeJobs.filter {
+                                it.company.contains(company.name, ignoreCase = true) || company.name.contains(it.company, ignoreCase = true)
+                            }
+                        }
+                    }
+                }
+            } catch (_: Exception) {
+                selectedCompanyJobs = activeJobs.filter {
+                    it.company.contains(company.name, ignoreCase = true) || company.name.contains(it.company, ignoreCase = true)
+                }
+            } finally {
+                isCompanyJobsLoading = false
+            }
+        }
+    }
+
+    init {
+        loadSavedJobs()
+        loadCurrentUser()
+        fetchDashboardData()
+        loadStories()
+    }
+
+    fun fetchDashboardData() {
+        viewModelScope.launch {
+            isDataLoading = true
+            try {
+                withContext(Dispatchers.IO) {
+                    val catResult = runCatching { api.getCategories() }.getOrNull()
+                    val homeResult = runCatching { api.getHomeData(selectedCountry) }.getOrNull()
+                    val marketResult = runCatching { api.getMarketData(100) }.getOrNull()
+                    val compResult = runCatching { api.getCompanies() }.getOrNull()
+                    val reportsResult: List<MarketReport>? = runCatching { api.getReports() }.getOrNull()
+
+                    withContext(Dispatchers.Main) {
+                        if (!catResult.isNullOrEmpty()) {
+                            categories = catResult
+                        }
+                        if (!reportsResult.isNullOrEmpty()) {
+                            reports = reportsResult
+                        } else if (homeResult != null && !homeResult.reports.isNullOrEmpty()) {
+                            reports = homeResult.reports
+                        }
+                        if (homeResult != null && !homeResult.spotlightCompanies.isNullOrEmpty()) {
+                            spotlightCompanies = homeResult.spotlightCompanies
+                        }
+                        if (marketResult != null) {
+                            val jobs = marketResult.activeJobs ?: marketResult.jobs
+                            if (!jobs.isNullOrEmpty()) {
+                                activeJobs = jobs
+                            }
+                        }
+                        if (!compResult.isNullOrEmpty()) {
+                            companies = compResult
+                        }
+                    }
+                }
+            } catch (_: Exception) {
+                // Fall back gracefully to initialized sample data
+            } finally {
+                isDataLoading = false
+            }
+        }
+    }
+
+    fun selectCountry(countryName: String) {
+        selectedCountry = countryName
+        isCountryDropdownOpen = false
+        prefs.edit().putString("selected_country", countryName).apply()
+        fetchDashboardData()
+    }
+
+    // Admin Auth State
+    var isAdmin by mutableStateOf(false)
+        private set
+
+    var passcode by mutableStateOf("")
+    var loginError by mutableStateOf("")
+
+    // Modals / Overlays
+    var isMobileMenuOpen by mutableStateOf(false)
+    var isLoginModalOpen by mutableStateOf(false)
+    var isCountryDropdownOpen by mutableStateOf(false)
+    var isNotificationBellOpen by mutableStateOf(false)
+    var isSearchModalOpen by mutableStateOf(false)
+    var searchQuery by mutableStateOf("")
+
+    // Notifications State (Live Backend Sync)
+    var notificationsList by mutableStateOf<List<AppNotification>>(emptyList())
+    var unreadNotificationsCount by mutableStateOf(0)
+    var totalNotificationsCount by mutableStateOf(0)
+    var hasMoreNotifications by mutableStateOf(false)
+    var isNotificationsLoading by mutableStateOf(false)
+    var isNotificationsLoadingMore by mutableStateOf(false)
+    var isMarkingAllNotifications by mutableStateOf(false)
+    var notificationToastMessage by mutableStateOf<String?>(null)
+    var notificationToastIsError by mutableStateOf(false)
+
+    val unreadCount: Int
+        get() = unreadNotificationsCount
+
+    // Backward-compatible mock notifications list
+    val notifications = mutableStateListOf<NotificationItem>().apply {
+        addAll(sampleNotifications)
+    }
+
+    fun loadNotifications(offset: Int = 0) {
+        val auth = authHeader
+        if (auth.isNullOrBlank()) {
+            isNotificationsLoading = false
+            isNotificationsLoadingMore = false
+            return
+        }
+
+        if (offset == 0) {
+            isNotificationsLoading = true
+        } else {
+            isNotificationsLoadingMore = true
+        }
+
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val response = api.getNotifications(
+                    auth = auth,
+                    limit = 30,
+                    offset = offset
+                )
+                val rawJson = response.string()
+                val json = if (rawJson.isNotBlank()) JSONObject(rawJson) else JSONObject()
+                val list = mutableListOf<AppNotification>()
+                val arr = json.optJSONArray("notifications") ?: JSONArray()
+                for (i in 0 until arr.length()) {
+                    val obj = arr.optJSONObject(i) ?: continue
+                    val actorObj = obj.optJSONObject("actor")
+                    val actor = if (actorObj != null) {
+                        NotificationActor(
+                            id = actorObj.optString("id").takeIf { it.isNotBlank() },
+                            name = actorObj.optString("name").takeIf { it.isNotBlank() },
+                            username = actorObj.optString("username").takeIf { it.isNotBlank() },
+                            profileImageUrl = actorObj.optString("profileImageUrl").takeIf { it.isNotBlank() }
+                        )
+                    } else null
+
+                    list.add(
+                        AppNotification(
+                            id = obj.optString("id", "${System.currentTimeMillis()}_$i"),
+                            type = obj.optString("type", "job_created"),
+                            title = obj.optString("title", ""),
+                            body = obj.optString("body").takeIf { it.isNotBlank() },
+                            link = obj.optString("link").takeIf { it.isNotBlank() },
+                            imageUrl = obj.optString("imageUrl").takeIf { it.isNotBlank() },
+                            actorId = obj.optString("actorId").takeIf { it.isNotBlank() },
+                            actor = actor,
+                            entityType = obj.optString("entityType").takeIf { it.isNotBlank() },
+                            entityId = obj.optString("entityId").takeIf { it.isNotBlank() },
+                            isRead = obj.optBoolean("isRead", false) || obj.optInt("isRead", 0) == 1,
+                            createdAt = obj.optString("createdAt", "")
+                        )
+                    )
+                }
+                val unread = json.optInt("unread", 0)
+                val total = json.optInt("total", list.size)
+                val hasMore = json.optBoolean("hasMore", false)
+
+                withContext(Dispatchers.Main) {
+                    if (offset == 0) {
+                        notificationsList = list
+                    } else {
+                        val existingIds = notificationsList.map { it.id }.toSet()
+                        val newItems = list.filter { it.id !in existingIds }
+                        notificationsList = notificationsList + newItems
+                    }
+                    unreadNotificationsCount = unread
+                    totalNotificationsCount = total
+                    hasMoreNotifications = hasMore
+                }
+            } catch (e: Exception) {
+                // Ignore network errors gracefully
+            } finally {
+                withContext(Dispatchers.Main) {
+                    isNotificationsLoading = false
+                    isNotificationsLoadingMore = false
+                }
+            }
+        }
+    }
+
+    fun markAllNotificationsRead() {
+        if (isMarkingAllNotifications || unreadNotificationsCount == 0) return
+        val auth = authHeader ?: return
+
+        isMarkingAllNotifications = true
+        val snapshot = notificationsList
+        notificationsList = notificationsList.map { it.copy(isRead = true) }
+        unreadNotificationsCount = 0
+
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val payload = JSONObject().apply {
+                    put("all", true)
+                }.toString().toRequestBody("application/json".toMediaTypeOrNull())
+
+                api.updateNotifications(auth, payload)
+                withContext(Dispatchers.Main) {
+                    notificationToastMessage = "All marked as read"
+                    notificationToastIsError = false
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    notificationsList = snapshot
+                    unreadNotificationsCount = snapshot.count { !it.isRead }
+                    notificationToastMessage = "Failed to mark all as read"
+                    notificationToastIsError = true
+                }
+            } finally {
+                withContext(Dispatchers.Main) {
+                    isMarkingAllNotifications = false
+                }
+            }
+        }
+    }
+
+    fun markNotificationRead(id: String, read: Boolean) {
+        val prevItem = notificationsList.find { it.id == id }
+        notificationsList = notificationsList.map { if (it.id == id) it.copy(isRead = read) else it }
+        if (prevItem != null && prevItem.isRead != read) {
+            unreadNotificationsCount = if (read) maxOf(0, unreadNotificationsCount - 1) else unreadNotificationsCount + 1
+        }
+
+        val auth = authHeader ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val payload = JSONObject().apply {
+                    put("ids", JSONArray().put(id))
+                }.toString().toRequestBody("application/json".toMediaTypeOrNull())
+
+                api.updateNotifications(auth, payload)
+            } catch (_: Exception) {}
+        }
+    }
+
+    fun deleteNotification(id: String) {
+        val snapshot = notificationsList
+        val item = notificationsList.find { it.id == id }
+        notificationsList = notificationsList.filter { it.id != id }
+        if (item != null && !item.isRead) {
+            unreadNotificationsCount = maxOf(0, unreadNotificationsCount - 1)
+        }
+
+        val auth = authHeader ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                api.deleteNotification(auth, id)
+                withContext(Dispatchers.Main) {
+                    notificationToastMessage = "Removed"
+                    notificationToastIsError = false
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    notificationsList = snapshot
+                    unreadNotificationsCount = snapshot.count { !it.isRead }
+                    notificationToastMessage = "Failed to remove notification"
+                    notificationToastIsError = true
+                }
+            }
+        }
+    }
+
+    fun handleNotificationClick(notification: AppNotification) {
+        if (!notification.isRead) {
+            markNotificationRead(notification.id, true)
+        }
+        val rawLink = notification.link?.trim() ?: ""
+        if (rawLink.isNotBlank()) {
+            when {
+                rawLink.contains("/stories") -> navigateTo(NavRoute.STORIES)
+                rawLink.contains("/jobs") || rawLink.contains("/careerredirect") -> {
+                    navigateTo(NavRoute.ALL_JOBS)
+                }
+                rawLink.contains("/profile") || rawLink.contains("/u/") -> {
+                    openUserProfile(null)
+                }
+                rawLink.contains("/reports") -> navigateTo(NavRoute.JOB_REPORTS)
+                else -> navigateTo(NavRoute.INTELLIGENCE_FEED)
+            }
+        }
+    }
+
+    fun openNotifications() {
+        navigateTo(NavRoute.NOTIFICATIONS)
+        if (userToken != null) {
+            loadNotifications(0)
+        }
+    }
+
+    fun submitPasscode(): Boolean {
+        loginError = ""
+        val trimmed = passcode.trim()
+        if (trimmed == "admin" || trimmed == "admin123") {
+            isAdmin = true
+            isLoginModalOpen = false
+            passcode = ""
+            return true
+        } else {
+            loginError = "INVALID INTEL ACCESS CODE."
+            passcode = ""
+            return false
+        }
+    }
+
+    fun navigateTo(route: NavRoute) {
+        currentRoute = route
+        isMobileMenuOpen = false
+    }
+
+    // ============================================================
+    // USER AUTH & SESSION (jobsreport_token sync)
+    // ============================================================
+    fun sanitizeJwtToken(raw: String?): String? {
+        if (raw.isNullOrBlank()) return null
+        var t = raw.trim()
+        var changed = true
+        while (changed) {
+            val prev = t
+            t = t.removeSurrounding("\"")
+                .removeSurrounding("'")
+                .trim()
+            if (t.startsWith("Bearer ", ignoreCase = true)) {
+                t = t.substring(7).trim()
+            }
+            changed = (t != prev)
+        }
+        return t.takeIf { it.isNotBlank() }
+    }
+
+    fun isTokenExpired(token: String?): Boolean {
+        val clean = sanitizeJwtToken(token) ?: return true
+        val claims = extractTokenClaims(clean) ?: return true
+        val expSec = claims.optLong("exp", 0L)
+        if (expSec <= 0L) return false
+        val nowSec = System.currentTimeMillis() / 1000L
+        return nowSec >= (expSec - 60L) // 60s buffer for clock skew
+    }
+
+    val authHeader: String?
+        get() {
+            val raw = userToken?.takeIf { it.isNotBlank() } ?: prefs.getString("jobsreport_token", null)?.takeIf { it.isNotBlank() }
+            val clean = sanitizeJwtToken(raw)
+            return if (!clean.isNullOrBlank() && !isTokenExpired(clean)) "Bearer $clean" else null
+        }
+
+    val cleanUserToken: String?
+        get() {
+            val raw = userToken?.takeIf { it.isNotBlank() } ?: prefs.getString("jobsreport_token", null)?.takeIf { it.isNotBlank() }
+            val clean = sanitizeJwtToken(raw)
+            return if (!clean.isNullOrBlank() && !isTokenExpired(clean)) clean else null
+        }
+
+    val isLoggedIn: Boolean
+        get() {
+            val token = cleanUserToken
+            return !token.isNullOrBlank() && !isTokenExpired(token)
+        }
+
+    fun handleSessionExpired() {
+        android.util.Log.w("AppState", "User session expired or invalidated; resetting token")
+        userToken = null
+        prefs.edit().remove("jobsreport_token").apply()
+    }
+
+    private fun extractTokenClaims(token: String?): JSONObject? {
+        val clean = sanitizeJwtToken(token) ?: return null
+        return try {
+            val parts = clean.split(".")
+            if (parts.size >= 2) {
+                val payload = String(android.util.Base64.decode(parts[1], android.util.Base64.URL_SAFE or android.util.Base64.NO_PADDING), Charsets.UTF_8)
+                JSONObject(payload)
+            } else null
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun extractUserIdFromToken(token: String?): String? {
+        val json = extractTokenClaims(token) ?: return null
+        return json.optString("sub").takeIf { it.isNotBlank() } ?: json.optString("id").takeIf { it.isNotBlank() }
+    }
+
+    private fun extractEmailFromToken(token: String?): String? {
+        val json = extractTokenClaims(token) ?: return null
+        return json.optString("email").takeIf { it.isNotBlank() }
+    }
+
+    private fun loadCurrentUser() {
+        val rawToken = prefs.getString("jobsreport_token", null)
+        val clean = sanitizeJwtToken(rawToken)
+
+        if (clean != null && isTokenExpired(clean)) {
+            android.util.Log.w("AppState", "Stored token is expired; resetting session")
+            handleSessionExpired()
+            currentUser = null
+            return
+        }
+
+        userToken = clean
+        if (clean != rawToken && clean != null) {
+            prefs.edit().putString("jobsreport_token", clean).apply()
+        }
+
+        var savedId = prefs.getString("user_id", null)
+        val extractedId = extractUserIdFromToken(clean)
+        if (!extractedId.isNullOrBlank() && (savedId.isNullOrBlank() || savedId.startsWith("usr_"))) {
+            savedId = extractedId
+            prefs.edit().putString("user_id", extractedId).apply()
+        }
+
+        val extractedEmail = extractEmailFromToken(clean)
+        var savedName = prefs.getString("user_name", null)
+        if (savedName.isNullOrBlank() && !extractedEmail.isNullOrBlank()) {
+            savedName = extractedEmail.substringBefore("@").replace(".", " ").replaceFirstChar { it.uppercase() }
+        }
+        val savedUsername = prefs.getString("user_username", null) ?: extractedEmail?.substringBefore("@")
+        val savedAvatar = prefs.getString("user_avatar", null)
+        val savedEmail = prefs.getString("user_email", null) ?: extractedEmail
+        val savedHeadline = prefs.getString("user_headline", null)
+        val savedLocation = prefs.getString("user_location", null)
+        val savedBio = prefs.getString("user_bio", null)
+        val savedWebsite = prefs.getString("user_website", null)
+        val savedWork = prefs.getString("user_work", null)
+        val savedEducation = prefs.getString("user_education", null)
+        val savedCover = prefs.getString("user_cover", null)
+        val isVerifiedInt = prefs.getInt("user_is_verified", 0)
+
+        val effectiveId = savedId?.takeIf { it.isNotBlank() }
+            ?: extractedId?.takeIf { it.isNotBlank() }
+            ?: if (!clean.isNullOrBlank()) "user_me" else ""
+        val effectiveName = savedName?.takeIf { it.isNotBlank() } ?: "User"
+
+        if (!clean.isNullOrBlank() && effectiveId.isNotBlank()) {
+            currentUser = StoryUser(
+                id = effectiveId,
+                name = effectiveName,
+                username = savedUsername,
+                email = savedEmail,
+                profileImageUrl = savedAvatar,
+                coverImageUrl = savedCover,
+                headline = savedHeadline,
+                location = savedLocation,
+                bio = savedBio,
+                work = savedWork,
+                education = savedEducation,
+                website = savedWebsite,
+                isVerified = isVerifiedInt,
+                followersCount = prefs.getInt("user_followers", 0),
+                followingCount = prefs.getInt("user_following", 0),
+                jobsCount = prefs.getInt("user_jobs_count", 0),
+                storiesCount = prefs.getInt("user_stories_count", 0),
+                jobAdvertsCount = prefs.getInt("user_job_adverts", 0),
+                joinedDate = prefs.getString("user_joined_date", null),
+                skills = emptyList()
+            )
+            // Proactively refresh own user profile from live API
+            viewModelScope.launch {
+                try {
+                    val meResp = api.getAuthUserMe("Bearer $clean")
+                    val meJsonStr = meResp.string()
+                    val meJson = JSONObject(meJsonStr)
+                    val userObj = meJson.optJSONObject("user")
+                    if (userObj != null) {
+                        val liveUser = StoryUser(
+                            id = userObj.optString("id", effectiveId),
+                            name = userObj.optString("name", effectiveName),
+                            username = userObj.optString("username", savedUsername),
+                            email = userObj.optString("email", savedEmail),
+                            profileImageUrl = userObj.optString("profile_image_url", savedAvatar),
+                            coverImageUrl = userObj.optString("cover_image_url", savedCover),
+                            headline = userObj.optString("headline", savedHeadline),
+                            bio = userObj.optString("bio", savedBio),
+                            work = userObj.optString("work", savedWork),
+                            education = userObj.optString("education", savedEducation),
+                            location = userObj.optString("location", savedLocation),
+                            website = userObj.optString("website", savedWebsite),
+                            country = userObj.optString("country", null),
+                            role = userObj.optString("role", null),
+                            isVerified = userObj.opt("is_verified") ?: userObj.opt("isVerified"),
+                            followersCount = userObj.optInt("followers_count", prefs.getInt("user_followers", 0)),
+                            followingCount = userObj.optInt("following_count", prefs.getInt("user_following", 0)),
+                            jobsCount = userObj.optInt("jobs_count", prefs.getInt("user_jobs_count", 0)),
+                            storiesCount = userObj.optInt("stories_count", prefs.getInt("user_stories_count", 0)),
+                            isFollowing = false
+                        )
+                        withContext(Dispatchers.Main) {
+                            currentUser = liveUser
+                            prefs.edit()
+                                .putString("user_id", liveUser.id)
+                                .putString("user_name", liveUser.name)
+                                .putString("user_username", liveUser.username)
+                                .putString("user_avatar", liveUser.profileImageUrl)
+                                .putString("user_cover", liveUser.coverImageUrl)
+                                .putString("user_email", liveUser.email)
+                                .putString("user_headline", liveUser.headline)
+                                .putString("user_location", liveUser.location)
+                                .putString("user_bio", liveUser.bio)
+                                .putString("user_work", liveUser.work)
+                                .putString("user_education", liveUser.education)
+                                .putString("user_website", liveUser.website)
+                                .putInt("user_is_verified", if (liveUser.isUserVerified) 1 else 0)
+                                .apply()
+                        }
+                    }
+                } catch (e: retrofit2.HttpException) {
+                    if (e.code() == 401 || e.code() == 403) {
+                        // Stored token is invalid or expired
+                        withContext(Dispatchers.Main) {
+                            handleSessionExpired()
+                            currentUser = null
+                        }
+                    } else {
+                        val liveUser = fetchUserProfile(effectiveId)
+                        if (liveUser != null) {
+                            withContext(Dispatchers.Main) {
+                                currentUser = liveUser
+                            }
+                        }
+                    }
+                } catch (_: Exception) {
+                    val liveUser = fetchUserProfile(effectiveId)
+                    if (liveUser != null) {
+                        withContext(Dispatchers.Main) {
+                            currentUser = liveUser
+                        }
+                    }
+                }
+            }
+            loadNotifications(0)
+        } else {
+            currentUser = null
+        }
+    }
+
+    fun updateCurrentUser(
+        name: String,
+        username: String? = null,
+        email: String? = null,
+        token: String? = null,
+        headline: String? = null,
+        location: String? = null,
+        bio: String? = null,
+        website: String? = null,
+        avatarUrl: String? = null,
+        coverUrl: String? = null,
+        work: String? = null,
+        education: String? = null,
+        isVerified: Any? = null,
+        followersCount: Int? = null,
+        followingCount: Int? = null,
+        jobsCount: Int? = null,
+        storiesCount: Int? = null,
+        jobAdvertsCount: Int? = null,
+        joinedDate: String? = null,
+        id: String? = null
+    ) {
+        val current = currentUser
+        val tokenResolved = token?.trim()?.takeIf { it.isNotBlank() } ?: userToken
+        val idFromToken = extractUserIdFromToken(tokenResolved)
+        val resolvedId = id?.takeIf { it.isNotBlank() && !it.startsWith("usr_") }
+            ?: idFromToken
+            ?: current?.id?.takeIf { !it.startsWith("usr_") }
+            ?: id?.takeIf { it.isNotBlank() }
+            ?: current?.id
+            ?: ("usr_" + java.util.UUID.randomUUID().toString().take(8))
+
+        val resolvedAvatar = avatarUrl?.ifBlank { null }
+            ?: current?.profileImageUrl
+            ?: getDefaultStoryAvatar(name, resolvedId)
+        val resolvedCover = coverUrl?.ifBlank { null } ?: current?.coverImageUrl
+        val resolvedHeadline = headline?.ifBlank { null } ?: current?.headline
+        val resolvedLocation = location?.ifBlank { null } ?: current?.location
+        val resolvedBio = bio?.ifBlank { null } ?: current?.bio
+        val resolvedWebsite = website?.ifBlank { null } ?: current?.website
+        val resolvedWork = work?.ifBlank { null } ?: current?.work
+        val resolvedEducation = education?.ifBlank { null } ?: current?.education
+        val resolvedVerified = isVerified ?: current?.isVerified
+
+        val updated = StoryUser(
+            id = resolvedId,
+            name = name.ifBlank { "User" },
+            username = username?.ifBlank { null } ?: current?.username,
+            email = email?.ifBlank { null } ?: current?.email,
+            profileImageUrl = resolvedAvatar,
+            coverImageUrl = resolvedCover,
+            headline = resolvedHeadline,
+            location = resolvedLocation,
+            bio = resolvedBio,
+            work = resolvedWork,
+            education = resolvedEducation,
+            website = resolvedWebsite,
+            isVerified = resolvedVerified,
+            followersCount = followersCount ?: current?.followersCount ?: 0,
+            followingCount = followingCount ?: current?.followingCount ?: 0,
+            jobsCount = jobsCount ?: current?.jobsCount ?: 0,
+            storiesCount = storiesCount ?: current?.storiesCount ?: 0,
+            jobAdvertsCount = jobAdvertsCount ?: current?.jobAdvertsCount ?: 0,
+            joinedDate = joinedDate ?: current?.joinedDate,
+            skills = current?.skills ?: emptyList()
+        )
+        currentUser = updated
+        if (!token.isNullOrBlank()) {
+            val clean = sanitizeJwtToken(token)
+            userToken = clean
+            if (clean != null) {
+                prefs.edit().putString("jobsreport_token", clean).apply()
+            }
+            loadNotifications(0)
+        }
+        val isVerifiedInt = if (updated.isUserVerified) 1 else 0
+        prefs.edit()
+            .putString("user_id", resolvedId)
+            .putString("user_name", updated.name)
+            .putString("user_username", updated.username)
+            .putString("user_avatar", resolvedAvatar)
+            .putString("user_cover", resolvedCover)
+            .putString("user_email", updated.email)
+            .putString("user_headline", resolvedHeadline)
+            .putString("user_location", resolvedLocation)
+            .putString("user_bio", resolvedBio)
+            .putString("user_work", resolvedWork)
+            .putString("user_education", resolvedEducation)
+            .putString("user_website", resolvedWebsite)
+            .putInt("user_is_verified", isVerifiedInt)
+            .putInt("user_followers", updated.followersCount ?: 0)
+            .putInt("user_following", updated.followingCount ?: 0)
+            .putInt("user_jobs_count", updated.jobsCount ?: 0)
+            .putInt("user_stories_count", updated.storiesCount ?: 0)
+            .putInt("user_job_adverts", updated.jobAdvertsCount ?: 0)
+            .apply()
+    }
+
+    suspend fun fetchUserProfile(userId: String): StoryUser? = withContext(Dispatchers.IO) {
+        try {
+            val res = runCatching { api.getUserProfile(userId) }.getOrNull()
+            if (res != null) {
+                val jsonStr = res.string().trim()
+                val json = JSONObject(jsonStr)
+                val userObj = json.optJSONObject("user")
+                    ?: if (json.has("id") || json.has("name") || json.has("is_verified") || json.has("username")) json else null
+                if (userObj != null) {
+                    val fetchedUser = StoryUser(
+                        id = userObj.optString("id", userId),
+                        name = userObj.optString("name", "User"),
+                        username = userObj.optString("username", null),
+                        email = userObj.optString("email", null),
+                        profileImageUrl = userObj.optString("profile_image_url", userObj.optString("avatar", null)),
+                        coverImageUrl = userObj.optString("cover_image_url", null),
+                        headline = userObj.optString("headline", null),
+                        bio = userObj.optString("bio", null),
+                        work = userObj.optString("work", null),
+                        education = userObj.optString("education", null),
+                        location = userObj.optString("location", null),
+                        website = userObj.optString("website", null),
+                        country = userObj.optString("country", null),
+                        role = userObj.optString("role", null),
+                        isVerified = userObj.opt("is_verified") ?: userObj.opt("isVerified"),
+                        followersCount = userObj.optInt("followers_count", 0),
+                        followingCount = userObj.optInt("following_count", 0),
+                        jobsCount = userObj.optInt("jobs_count", 0),
+                        storiesCount = userObj.optInt("stories_count", 0),
+                        isFollowing = userObj.optBoolean("is_following", false),
+                        createdAt = userObj.optString("created_at", null)
+                    )
+                    withContext(Dispatchers.Main) {
+                        userProfilesCache[userId] = fetchedUser
+                        verifiedUsersMap[userId] = fetchedUser.isUserVerified
+                    }
+                    return@withContext fetchedUser
+                }
+            }
+            null
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    suspend fun fetchUserJobs(userId: String): List<JobOpportunity> = withContext(Dispatchers.IO) {
+        if (userId.isBlank()) return@withContext emptyList()
+        try {
+            val res = runCatching { api.getUserJobs(userId, limit = 100) }.getOrNull()
+            if (res != null) {
+                val rawStr = res.string().trim()
+                val list = mutableListOf<JobOpportunity>()
+                val arr = if (rawStr.startsWith("[")) {
+                    JSONArray(rawStr)
+                } else if (rawStr.startsWith("{")) {
+                    val json = JSONObject(rawStr)
+                    json.optJSONArray("jobs")
+                        ?: json.optJSONArray("data")
+                        ?: json.optJSONArray("userJobs")
+                } else null
+
+                if (arr != null) {
+                    for (i in 0 until arr.length()) {
+                        val obj = arr.getJSONObject(i)
+                        list.add(
+                            JobOpportunity(
+                                id = obj.optString("id", java.util.UUID.randomUUID().toString()),
+                                title = obj.optString("title", "Job Title"),
+                                company = obj.optString("company", obj.optString("company_name", "Company")),
+                                location = obj.optString("location", "Remote"),
+                                salary = obj.optString("salary", null),
+                                role = obj.optString("role", obj.optString("job_category", "Technology & Engineering")),
+                                logoUrl = obj.optString("logoUrl", obj.optString("company_logo", null)),
+                                active = if (obj.has("active")) obj.optBoolean("active", true) else (obj.optInt("is_active", 1) == 1),
+                                postedAt = obj.optString("postedAt", obj.optString("posted_at", "Recent")),
+                                expiresAt = obj.optString("expiresAt", obj.optString("expires_at", null)),
+                                description = obj.optString("description", null),
+                                companyWebsite = obj.optString("companyWebsite", obj.optString("company_website", null)),
+                                whatsappNumber = obj.optString("whatsapp_number", obj.optString("whatsappNumber", null)),
+                                applicationInstructions = obj.optString("application_instructions", obj.optString("applicationInstructions", null)),
+                                url = obj.optString("url", null),
+                                employmentType = obj.optString("employment_type", obj.optString("employmentType", "FULL_TIME")),
+                                workplaceType = obj.optString("workplace_type", obj.optString("workplaceType", "Onsite")),
+                                educationLevel = obj.optString("education_level", obj.optString("educationLevel", "Degree / Diploma")),
+                                experienceMonths = obj.optInt("experience_months", obj.optInt("experienceMonths", 24)),
+                                city = obj.optString("city", "Dar es Salaam"),
+                                region = obj.optString("region", "Dar es Salaam"),
+                                country = obj.optString("country", "Tanzania"),
+                                jobCategory = obj.optString("job_category", obj.optString("jobCategory", "Technology & Engineering"))
+                            )
+                        )
+                    }
+                }
+                return@withContext list
+            }
+            emptyList()
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    suspend fun followUserApi(userId: String, shouldFollow: Boolean): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val auth = authHeader
+            if (shouldFollow) {
+                runCatching { api.followUser(auth, userId) }
+            } else {
+                runCatching { api.unfollowUser(auth, userId) }
+            }
+            true
+        } catch (_: Exception) {
+            true
+        }
+    }
+
+    suspend fun saveProfileApi(
+        name: String? = null,
+        headline: String? = null,
+        bio: String? = null,
+        work: String? = null,
+        education: String? = null,
+        location: String? = null,
+        website: String? = null,
+        avatarUrl: String? = null,
+        coverUrl: String? = null
+    ): Boolean = withContext(Dispatchers.IO) {
+        val auth = authHeader
+        if (auth.isNullOrBlank()) {
+            android.util.Log.e("AppState", "saveProfileApi: authHeader is null")
+            return@withContext false
+        }
+
+        try {
+            val json = JSONObject()
+            val effectiveName = name?.trim()?.takeIf { it.isNotBlank() } ?: currentUser?.name?.trim()?.takeIf { it.isNotBlank() }
+            if (effectiveName != null) {
+                json.put("name", effectiveName)
+            }
+            if (headline != null) json.put("headline", if (headline.isBlank()) JSONObject.NULL else headline)
+            if (bio != null) json.put("bio", if (bio.isBlank()) JSONObject.NULL else bio)
+            if (work != null) json.put("work", if (work.isBlank()) JSONObject.NULL else work)
+            if (education != null) json.put("education", if (education.isBlank()) JSONObject.NULL else education)
+            if (location != null) json.put("location", if (location.isBlank()) JSONObject.NULL else location)
+            if (website != null) json.put("website", if (website.isBlank()) JSONObject.NULL else website)
+            if (avatarUrl != null) json.put("profile_image_url", avatarUrl)
+            if (coverUrl != null) json.put("cover_image_url", coverUrl)
+
+            val body = json.toString().toRequestBody("application/json".toMediaTypeOrNull())
+            val responseBody = api.updateProfile(auth, body)
+            val jsonStr = responseBody.string()
+            val respJson = JSONObject(jsonStr)
+            val userObj = respJson.optJSONObject("user")
+
+            val serverId = userObj?.optString("id") ?: currentUser?.id ?: extractUserIdFromToken(cleanUserToken)
+
+            withContext(Dispatchers.Main) {
+                updateCurrentUser(
+                    id = serverId,
+                    name = userObj?.optString("name", effectiveName ?: "User") ?: (effectiveName ?: "User"),
+                    username = userObj?.optString("username", currentUser?.username) ?: currentUser?.username,
+                    headline = userObj?.optString("headline", headline ?: "") ?: headline,
+                    location = userObj?.optString("location", location ?: "") ?: location,
+                    bio = userObj?.optString("bio", bio ?: "") ?: bio,
+                    website = userObj?.optString("website", website ?: "") ?: website,
+                    avatarUrl = userObj?.optString("profile_image_url", avatarUrl ?: "") ?: avatarUrl,
+                    coverUrl = userObj?.optString("cover_image_url", coverUrl ?: "") ?: coverUrl,
+                    work = userObj?.optString("work", work ?: "") ?: work,
+                    education = userObj?.optString("education", education ?: "") ?: education
+                )
+            }
+            true
+        } catch (e: retrofit2.HttpException) {
+            val errBody = e.response()?.errorBody()?.string() ?: ""
+            android.util.Log.e("AppState", "saveProfileApi HTTP ${e.code()}: $errBody", e)
+            false
+        } catch (e: Exception) {
+            android.util.Log.e("AppState", "saveProfileApi failed", e)
+            false
+        }
+    }
+
+    suspend fun deleteUserJob(jobId: String): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val auth = authHeader
+            runCatching { api.deleteJob(auth, jobId) }
+            activeJobs = activeJobs.filter { it.id != jobId }
+            true
+        } catch (_: Exception) {
+            activeJobs = activeJobs.filter { it.id != jobId }
+            true
+        }
+    }
+
+    fun openAuth() {
+        isUserAuthModalOpen = true
+    }
+
+    fun closeAuth() {
+        isUserAuthModalOpen = false
+    }
+
+    fun logout() {
+        isAdmin = false
+        userToken = null
+        currentUser = null
+        notificationsList = emptyList()
+        unreadNotificationsCount = 0
+        prefs.edit()
+            .remove("jobsreport_token")
+            .remove("user_id")
+            .remove("user_name")
+            .remove("user_username")
+            .remove("user_avatar")
+            .remove("user_cover")
+            .remove("user_email")
+            .remove("user_headline")
+            .remove("user_location")
+            .remove("user_bio")
+            .remove("user_website")
+            .remove("user_work")
+            .remove("user_education")
+            .remove("user_is_verified")
+            .apply()
+        if (currentRoute == NavRoute.USER_PROFILE) {
+            currentRoute = NavRoute.INTELLIGENCE_FEED
+        }
+    }
+
+    suspend fun login(email: String, password: String, remember: Boolean = true): com.example.data.AuthResult = withContext(Dispatchers.IO) {
+        try {
+            val json = JSONObject().apply {
+                put("email", email.trim())
+                put("password", password)
+                put("remember", remember)
+            }
+            val body = json.toString().toRequestBody("application/json".toMediaTypeOrNull())
+            val responseBody = try {
+                api.loginRaw(body)
+            } catch (e: retrofit2.HttpException) {
+                val errBody = e.response()?.errorBody()?.string() ?: ""
+                val errMsg = try {
+                    val errJson = JSONObject(errBody)
+                    errJson.optString("message", errJson.optString("error", "Invalid credentials"))
+                } catch (_: Exception) {
+                    "Invalid email or password"
+                }
+                return@withContext com.example.data.AuthResult(success = false, message = errMsg)
+            } catch (e: Exception) {
+                return@withContext com.example.data.AuthResult(success = false, message = e.message ?: "Authentication failed. Please check network.")
+            }
+
+            val jsonStr = responseBody.string()
+            val respJson = org.json.JSONObject(jsonStr)
+            val rawToken = respJson.optString("token", respJson.optString("accessToken", ""))
+            val token = rawToken.trim().removeSurrounding("\"").removePrefix("Bearer ").removePrefix("bearer ").trim()
+
+            if (token.isNotBlank()) {
+                val userObj = respJson.optJSONObject("user")
+                val name = userObj?.optString("name") ?: email.substringBefore("@").replace(".", " ").replaceFirstChar { it.uppercase() }
+                val username = userObj?.optString("username") ?: email.substringBefore("@")
+                val avatar = userObj?.optString("profile_image_url", userObj?.optString("avatar", null))
+                    ?: getDefaultStoryAvatar(name, username)
+                val userId = userObj?.optString("id", "")?.takeIf { it.isNotBlank() }
+                    ?: extractUserIdFromToken(token)
+                    ?: ""
+                val isVerifiedVal = userObj?.opt("is_verified") ?: userObj?.opt("isVerified")
+
+                withContext(Dispatchers.Main) {
+                    updateCurrentUser(
+                        id = userId,
+                        name = name,
+                        username = username,
+                        email = email.trim(),
+                        token = token,
+                        avatarUrl = avatar,
+                        isVerified = isVerifiedVal
+                    )
+                    // If user was drafting a story, keep/reopen story dialog
+                    if (storyDraftText.isNotBlank() || storyDraftUploadedUrl != null) {
+                        isCreateStoryOpen = true
+                    }
+                    if (userId.isNotBlank()) {
+                        viewModelScope.launch {
+                            val live = fetchUserProfile(userId)
+                            if (live != null) {
+                                withContext(Dispatchers.Main) {
+                                    currentUser = live.copy(email = email.trim())
+                                }
+                            }
+                        }
+                    }
+                }
+                return@withContext com.example.data.AuthResult(success = true, token = token, message = "Welcome back, $name!")
+            } else {
+                val errMsg = respJson.optString("message", respJson.optString("error", "Invalid credentials. Please check your email and password."))
+                return@withContext com.example.data.AuthResult(success = false, message = errMsg)
+            }
+        } catch (e: Exception) {
+            val msg = e.message ?: "Authentication failed. Please check your network connection and credentials."
+            return@withContext com.example.data.AuthResult(success = false, message = msg)
+        }
+    }
+
+    suspend fun register(
+        name: String,
+        email: String,
+        password: String,
+        username: String? = null,
+        headline: String? = null,
+        location: String? = null
+    ): com.example.data.AuthResult = withContext(Dispatchers.IO) {
+        try {
+            val json = JSONObject().apply {
+                put("name", name.trim())
+                put("email", email.trim())
+                put("password", password)
+                if (!username.isNullOrBlank()) put("username", username.trim())
+                if (!headline.isNullOrBlank()) put("headline", headline.trim())
+                if (!location.isNullOrBlank()) put("location", location.trim())
+            }
+            val body = json.toString().toRequestBody("application/json".toMediaTypeOrNull())
+            val responseBody = try {
+                api.registerRaw(body)
+            } catch (e: retrofit2.HttpException) {
+                val errBody = e.response()?.errorBody()?.string() ?: ""
+                val errMsg = try {
+                    val errJson = JSONObject(errBody)
+                    errJson.optString("message", errJson.optString("error", "Registration failed"))
+                } catch (_: Exception) {
+                    "Registration failed"
+                }
+                return@withContext com.example.data.AuthResult(success = false, message = errMsg)
+            } catch (e: Exception) {
+                return@withContext com.example.data.AuthResult(success = false, message = e.message ?: "Registration failed")
+            }
+
+            val jsonStr = responseBody.string()
+            val respJson = org.json.JSONObject(jsonStr)
+            val rawToken = respJson.optString("token", respJson.optString("accessToken", ""))
+            val token = rawToken.trim().removeSurrounding("\"").removePrefix("Bearer ").removePrefix("bearer ").trim()
+            val userObj = respJson.optJSONObject("user")
+            val resolvedName = userObj?.optString("name", name.trim()) ?: name.trim()
+            val resolvedUsername = userObj?.optString("username", username?.trim() ?: email.substringBefore("@"))
+                ?: (username?.trim() ?: email.substringBefore("@"))
+            val avatar = userObj?.optString("profile_image_url", userObj?.optString("avatar", null))
+                ?: getDefaultStoryAvatar(resolvedName, resolvedUsername)
+            val userId = userObj?.optString("id", "")?.takeIf { it.isNotBlank() }
+                ?: extractUserIdFromToken(token)
+                ?: ""
+            val isVerifiedVal = userObj?.opt("is_verified") ?: userObj?.opt("isVerified")
+
+            if (token.isNotBlank()) {
+                withContext(Dispatchers.Main) {
+                    updateCurrentUser(
+                        id = userId,
+                        name = resolvedName,
+                        username = resolvedUsername,
+                        email = email.trim(),
+                        token = token,
+                        avatarUrl = avatar,
+                        headline = headline?.trim(),
+                        location = location?.trim(),
+                        isVerified = isVerifiedVal
+                    )
+                    if (storyDraftText.isNotBlank() || storyDraftUploadedUrl != null) {
+                        isCreateStoryOpen = true
+                    }
+                    if (userId.isNotBlank()) {
+                        viewModelScope.launch {
+                            val live = fetchUserProfile(userId)
+                            if (live != null) {
+                                withContext(Dispatchers.Main) {
+                                    currentUser = live.copy(email = email.trim())
+                                }
+                            }
+                        }
+                    }
+                }
+                return@withContext com.example.data.AuthResult(success = true, token = token, message = "Account created! Welcome, $resolvedName.")
+            } else {
+                val errMsg = respJson.optString("message", respJson.optString("error", "Registration failed."))
+                return@withContext com.example.data.AuthResult(success = false, message = errMsg)
+            }
+        } catch (e: Exception) {
+            return@withContext com.example.data.AuthResult(success = false, message = e.message ?: "Registration failed")
+        }
+    }
+
+    suspend fun forgotPassword(email: String): Result<Unit> = withContext(Dispatchers.IO) {
+        runCatching {
+            val payload = com.example.data.ForgotPasswordPayload(email = email.trim())
+            runCatching { api.forgotPassword(payload) }
+            Unit
+        }
+    }
+
+    // ============================================================
+    // STORY SERVICE METHODS (Exact endpoints & logic as Story.tsx)
+    // ============================================================
+    fun loadStories() {
+        viewModelScope.launch {
+            isStoriesLoading = true
+            try {
+                withContext(Dispatchers.IO) {
+                    val response = runCatching { api.getStoriesRaw() }.getOrNull()
+                    if (response != null) {
+                        val rawStr = response.string().trim()
+                        val parsed = parseStories(rawStr)
+                        if (!parsed.isNullOrEmpty()) {
+                            val active = parsed.filter { !isStoryExpired(it) }
+                            withContext(Dispatchers.Main) {
+                                val serverStoryIds = active.map { it.id }.toSet()
+                                val currentUid = currentUser?.id
+                                val recentOwnStories = stories.filter {
+                                    (currentUid != null && it.userId == currentUid) &&
+                                    it.id !in serverStoryIds &&
+                                    !isStoryExpired(it)
+                                }
+                                stories = recentOwnStories + active
+                                active.forEach { s ->
+                                    if (s.user != null) {
+                                        userProfilesCache[s.userId] = s.user
+                                        if (s.user.isVerified != null) {
+                                            verifiedUsersMap[s.userId] = s.user.isUserVerified
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Fetch real user profiles for all story authors from the backend
+                            val uniqueAuthorIds = active.map { it.userId }.distinct()
+                            uniqueAuthorIds.forEach { uid ->
+                                if (!verifiedUsersMap.containsKey(uid) || !userProfilesCache.containsKey(uid)) {
+                                    val fetchedUser = fetchUserProfile(uid)
+                                    if (fetchedUser != null) {
+                                        withContext(Dispatchers.Main) {
+                                            userProfilesCache[uid] = fetchedUser
+                                            verifiedUsersMap[uid] = fetchedUser.isUserVerified
+                                        }
+                                    }
+                                }
+                            }
+                        } else {
+                            withContext(Dispatchers.Main) {
+                                val currentUid = currentUser?.id
+                                val recentOwnStories = stories.filter {
+                                    (currentUid != null && it.userId == currentUid) && !isStoryExpired(it)
+                                }
+                                stories = recentOwnStories
+                            }
+                        }
+                    } else {
+                        withContext(Dispatchers.Main) {
+                            val currentUid = currentUser?.id
+                            val recentOwnStories = stories.filter {
+                                (currentUid != null && it.userId == currentUid) && !isStoryExpired(it)
+                            }
+                            stories = recentOwnStories
+                        }
+                    }
+                }
+            } catch (_: Exception) {
+                withContext(Dispatchers.Main) {
+                    val currentUid = currentUser?.id
+                    val recentOwnStories = stories.filter {
+                        (currentUid != null && it.userId == currentUid) && !isStoryExpired(it)
+                    }
+                    stories = recentOwnStories
+                }
+            } finally {
+                isStoriesLoading = false
+            }
+        }
+    }
+
+    private fun parseStories(rawJson: String): List<StoryType>? {
+        return try {
+            if (rawJson.startsWith("[")) {
+                storyListAdapter.fromJson(rawJson)
+            } else if (rawJson.startsWith("{")) {
+                val obj = storiesResponseAdapter.fromJson(rawJson)
+                if (obj?.stories != null) {
+                    obj.stories
+                } else {
+                    null
+                }
+            } else null
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    fun recordStoryView(storyId: String) {
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    runCatching { api.recordStoryView(storyId) }
+                }
+                withContext(Dispatchers.Main) {
+                    stories = stories.map {
+                        if (it.id == storyId) it.copy(viewsCount = (it.viewsCount ?: 0) + 1) else it
+                    }
+                    if (viewingStory?.id == storyId) {
+                        viewingStory = viewingStory?.let { it.copy(viewsCount = (it.viewsCount ?: 0) + 1) }
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+    }
+
+    suspend fun createStory(payload: CreateStoryPayload): Result<Unit> = withContext(Dispatchers.IO) {
+        val token = cleanUserToken
+        if (token.isNullOrBlank() || isTokenExpired(token)) {
+            android.util.Log.e("AppState", "createStory: auth token is null or expired")
+            withContext(Dispatchers.Main) {
+                handleSessionExpired()
+            }
+            return@withContext Result.failure(IllegalStateException("Your session has expired. Please log in to post your story."))
+        }
+        val auth = "Bearer $token"
+
+        try {
+            val json = JSONObject().apply {
+                put("type", payload.type)
+                put("expires_at", payload.expiresAt)
+                if (!payload.textContent.isNullOrBlank()) {
+                    put("text_content", payload.textContent.trim())
+                }
+                if (!payload.backgroundStyle.isNullOrBlank()) {
+                    put("background_style", payload.backgroundStyle.trim())
+                }
+                if (!payload.mediaUrl.isNullOrBlank()) {
+                    put("media_url", payload.mediaUrl.trim())
+                }
+                if (!payload.mediaThumb.isNullOrBlank()) {
+                    put("media_thumb", payload.mediaThumb.trim())
+                }
+            }
+            val body = json.toString().toRequestBody("application/json".toMediaTypeOrNull())
+
+            val responseBody = api.createStoryRaw(auth, body)
+            val jsonStr = responseBody.string()
+            val respObj = JSONObject(jsonStr)
+
+            val storyObj = respObj.optJSONObject("story")
+            if (storyObj != null) {
+                val nowIso = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", java.util.Locale.US).apply {
+                    timeZone = java.util.TimeZone.getTimeZone("UTC")
+                }.format(java.util.Date())
+
+                val userObj = currentUser ?: StoryUser(
+                    id = storyObj.optString("user_id", "user_me"),
+                    name = "You",
+                    profileImageUrl = getDefaultStoryAvatar("You", "you")
+                )
+
+                val serverStory = StoryType(
+                    id = storyObj.optString("id"),
+                    userId = storyObj.optString("user_id", userObj.id),
+                    slug = storyObj.optString("slug", ""),
+                    type = storyObj.optString("type", payload.type),
+                    textContent = storyObj.optString("text_content").takeIf { it.isNotBlank() } ?: payload.textContent,
+                    backgroundStyle = storyObj.optString("background_style").takeIf { it.isNotBlank() } ?: payload.backgroundStyle,
+                    mediaUrl = storyObj.optString("media_url").takeIf { it.isNotBlank() } ?: payload.mediaUrl,
+                    mediaThumb = storyObj.optString("media_thumb").takeIf { it.isNotBlank() } ?: payload.mediaThumb,
+                    createdAt = storyObj.optString("created_at", nowIso),
+                    expiresAt = storyObj.optString("expires_at", payload.expiresAt),
+                    isActive = storyObj.opt("is_active") ?: 1,
+                    viewsCount = storyObj.optInt("views_count", 0),
+                    user = userObj
+                )
+                withContext(Dispatchers.Main) {
+                    stories = listOf(serverStory) + stories.filter { it.id != serverStory.id }
+                    currentUser = currentUser?.copy(
+                        storiesCount = (currentUser?.storiesCount ?: 0) + 1
+                    )
+                    clearStoryDraft()
+                }
+            }
+            Result.success(Unit)
+        } catch (e: retrofit2.HttpException) {
+            val errBody = e.response()?.errorBody()?.string() ?: ""
+            if (e.code() == 401 || e.code() == 403) {
+                withContext(Dispatchers.Main) {
+                    handleSessionExpired()
+                }
+                Result.failure(IllegalStateException("Your session has expired. Please log in to post your story."))
+            } else {
+                val errMsg = try {
+                    JSONObject(errBody).optString("error", "Failed to share story (${e.code()})")
+                } catch (_: Exception) {
+                    "Failed to share story (${e.code()})"
+                }
+                android.util.Log.e("AppState", "createStory HTTP ${e.code()}: $errBody", e)
+                Result.failure(IllegalStateException(errMsg))
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("AppState", "createStory error", e)
+            Result.failure(e)
+        }
+    }
+
+    suspend fun deleteStory(storyId: String): Result<Unit> = withContext(Dispatchers.IO) {
+        runCatching {
+            val auth = authHeader
+            api.deleteStory(auth, storyId)
+            withContext(Dispatchers.Main) {
+                stories = stories.filter { it.id != storyId }
+                if (viewingStory?.id == storyId) {
+                    viewingStory = null
+                }
+            }
+            Unit
+        }
+    }
+
+    suspend fun uploadMedia(
+        mainBytes: ByteArray,
+        mainName: String,
+        mainMime: String,
+        thumbBytes: ByteArray,
+        thumbName: String,
+        thumbMime: String
+    ): Result<UploadResponse> = withContext(Dispatchers.IO) {
+        runCatching {
+            val auth = authHeader
+
+            val fileReq = mainBytes.toRequestBody(mainMime.toMediaTypeOrNull())
+            val filePart = MultipartBody.Part.createFormData("file", mainName, fileReq)
+
+            val thumbReq = thumbBytes.toRequestBody(thumbMime.toMediaTypeOrNull())
+            val thumbPart = MultipartBody.Part.createFormData("thumbnail", thumbName, thumbReq)
+
+            val nameReq = mainName.toRequestBody("text/plain".toMediaTypeOrNull())
+            val namePart = MultipartBody.Part.createFormData("name", null, nameReq)
+
+            val alt = "Story by ${currentUser?.name ?: "User"}"
+            val altReq = alt.toRequestBody("text/plain".toMediaTypeOrNull())
+            val altPart = MultipartBody.Part.createFormData("altText", null, altReq)
+
+            val responseBody = api.uploadMedia(auth, filePart, thumbPart, namePart, altPart)
+            val jsonStr = responseBody.string()
+            val parsed = uploadResponseAdapter.fromJson(jsonStr)
+            parsed ?: run {
+                val json = JSONObject(jsonStr)
+                UploadResponse(
+                    url = json.optString("url", json.optString("dataUrl", null)),
+                    thumbnailUrl = json.optString("thumbnail_url", json.optString("url", null)),
+                    dataUrl = json.optString("dataUrl", null)
+                )
+            }
+        }
+    }
+
+    var uploadError by mutableStateOf<String?>(null)
+
+    suspend fun uploadImage(context: Context, uri: Uri): String? = withContext(Dispatchers.IO) {
+        uploadError = null
+        try {
+            // 1. Compress (ImageCompressor validates image/*, caps 8MB, scales 1600px, JPEG q85→40, ≤500KB)
+            val compressed = ImageCompressor.processImageUri(context, uri).getOrThrow()
+
+            // 2. Build multipart parts (field names match /api/upload)
+            val filePart = MultipartBody.Part.createFormData(
+                "file",
+                compressed.mainFileName,
+                compressed.mainBytes.toRequestBody(compressed.mainMime.toMediaTypeOrNull())
+            )
+            val namePart = MultipartBody.Part.createFormData("name", compressed.mainFileName)
+            val altPart = MultipartBody.Part.createFormData("altText", "")
+
+            // 3. Upload via existing Retrofit method
+            val auth = authHeader
+            val resp = api.uploadMedia(auth, filePart, null, namePart, altPart)
+
+            // 4. Parse { url }
+            val rawStr = resp.string()
+            val json = JSONObject(rawStr)
+            val url = json.optString("url", json.optString("dataUrl", ""))
+            if (url.isBlank()) throw IllegalStateException("Upload failed")
+            url
+        } catch (e: Exception) {
+            uploadError = e.message ?: "Upload failed"
+            null
+        }
+    }
+
+    suspend fun updateProfileImage(context: Context, uri: Uri, field: String): String? {
+        val url = uploadImage(context, uri) ?: return null
+        val u = currentUser ?: return null
+        saveProfileApi(
+            name = u.name,
+            headline = u.headline,
+            bio = u.bio,
+            work = u.work,
+            education = u.education,
+            location = u.location,
+            website = u.website,
+            avatarUrl = if (field == "avatar") url else u.profileImageUrl,
+            coverUrl = if (field == "cover") url else u.coverImageUrl
+        )
+        return url
+    }
+
+    suspend fun fetchAllCompaniesCatalog(): List<Company> = withContext(Dispatchers.IO) {
+        try {
+            val response = api.getAllCompaniesRaw(all = true).string()
+            val list = mutableListOf<Company>()
+            if (response.trim().startsWith("[")) {
+                val array = org.json.JSONArray(response)
+                for (i in 0 until array.length()) {
+                    val obj = array.getJSONObject(i)
+                    list.add(
+                        Company(
+                            id = obj.optString("id", "comp-$i"),
+                            name = obj.optString("name", ""),
+                            industry = obj.optString("industry", null),
+                            logoUrl = obj.optString("logoUrl", null),
+                            url = obj.optString("url", null),
+                            description = obj.optString("description", null),
+                            country = obj.optString("country", null)
+                        )
+                    )
+                }
+            } else {
+                val root = org.json.JSONObject(response)
+                val array = root.optJSONArray("companies") ?: org.json.JSONArray()
+                for (i in 0 until array.length()) {
+                    val obj = array.getJSONObject(i)
+                    list.add(
+                        Company(
+                            id = obj.optString("id", "comp-$i"),
+                            name = obj.optString("name", ""),
+                            industry = obj.optString("industry", null),
+                            logoUrl = obj.optString("logoUrl", null),
+                            url = obj.optString("url", null),
+                            description = obj.optString("description", null),
+                            country = obj.optString("country", null)
+                        )
+                    )
+                }
+            }
+            if (list.isNotEmpty()) list.filter { it.name.isNotBlank() } else sampleCompanies
+        } catch (_: Exception) {
+            sampleCompanies
+        }
+    }
+
+    suspend fun createCompany(jsonPayload: String): Pair<Boolean, String?> = withContext(Dispatchers.IO) {
+        try {
+            val auth = authHeader
+            val reqBody = jsonPayload.toRequestBody("application/json".toMediaTypeOrNull())
+            api.createCompanyRaw(auth, reqBody).string()
+            Pair(true, null)
+        } catch (e: Exception) {
+            Pair(false, e.message ?: "Failed to create company")
+        }
+    }
+
+    suspend fun saveUserWork(companyName: String): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val auth = authHeader ?: return@withContext false
+            val json = JSONObject().apply { put("work", companyName.trim()) }
+            val reqBody = json.toString().toRequestBody("application/json".toMediaTypeOrNull())
+            api.updateProfile(auth, reqBody)
+            withContext(Dispatchers.Main) {
+                currentUser = currentUser?.copy(work = companyName.trim())
+                prefs.edit().putString("user_work", companyName.trim()).apply()
+            }
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    suspend fun submitUserJob(
+        jsonPayload: String,
+        isEdit: Boolean,
+        jobId: String?
+    ): Pair<Boolean, String?> = withContext(Dispatchers.IO) {
+        try {
+            val auth = authHeader ?: return@withContext Pair(false, "User not authenticated")
+            val reqBody = jsonPayload.toRequestBody("application/json".toMediaTypeOrNull())
+            if (isEdit && !jobId.isNullOrBlank()) {
+                val userId = currentUser?.id ?: ""
+                api.updateUserJob(auth, userId, reqBody)
+            } else {
+                api.createUserJob(auth, reqBody)
+            }
+            withContext(Dispatchers.Main) {
+                fetchDashboardData()
+            }
+            Pair(true, null)
+        } catch (e: Exception) {
+            Pair(false, e.message ?: "Failed to submit job")
+        }
+    }
+}
+
+
