@@ -14,6 +14,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bookmark
@@ -185,35 +188,56 @@ fun HeaderNav(
                 }
             }
 
-            // 4. Notifications Bell Button
-            Box(
-                modifier = Modifier
-                    .size(36.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(if (viewModel.currentRoute == NavRoute.NOTIFICATIONS) PrimaryBlue.copy(alpha = 0.2f) else BgCard)
-                    .border(
-                        1.dp,
-                        if (viewModel.currentRoute == NavRoute.NOTIFICATIONS) PrimaryBlue.copy(alpha = 0.5f) else BorderWhite10,
-                        RoundedCornerShape(8.dp)
-                    )
-                    .clickable { viewModel.openNotifications() },
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Notifications,
-                    contentDescription = "Notifications",
-                    tint = if (viewModel.currentRoute == NavRoute.NOTIFICATIONS || viewModel.unreadNotificationsCount > 0) LightBlue else TextPrimary,
-                    modifier = Modifier.size(18.dp)
-                )
-                if (viewModel.unreadNotificationsCount > 0) {
+            // 4. Notifications Bell Button (Only shown when logged in, matching web)
+            if (viewModel.isLoggedIn) {
+                val unread = viewModel.unreadNotificationsCount
+                val displayCount = if (unread > 99) "99+" else unread.toString()
+                Box(
+                    modifier = Modifier.size(36.dp),
+                    contentAlignment = Alignment.Center
+                ) {
                     Box(
                         modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .padding(2.dp)
-                            .size(8.dp)
-                            .clip(CircleShape)
-                            .background(LightBlue)
-                    )
+                            .fillMaxSize()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(if (viewModel.currentRoute == NavRoute.NOTIFICATIONS) PrimaryBlue.copy(alpha = 0.2f) else BgCard)
+                            .border(
+                                1.dp,
+                                if (viewModel.currentRoute == NavRoute.NOTIFICATIONS) PrimaryBlue.copy(alpha = 0.5f) else BorderWhite10,
+                                RoundedCornerShape(8.dp)
+                            )
+                            .clickable { viewModel.openNotifications() },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Notifications,
+                            contentDescription = if (unread > 0) "Notifications ($unread unread)" else "Notifications",
+                            tint = if (viewModel.currentRoute == NavRoute.NOTIFICATIONS || unread > 0) LightBlue else TextPrimary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+
+                    if (unread > 0) {
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .offset(x = 5.dp, y = (-4).dp)
+                                .defaultMinSize(minWidth = 16.dp, minHeight = 16.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(Color(0xFFF3425F))
+                                .border(1.5.dp, BgSurface, RoundedCornerShape(8.dp))
+                                .padding(horizontal = 4.dp, vertical = 1.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = displayCount,
+                                color = Color.White,
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Bold,
+                                lineHeight = 10.sp
+                            )
+                        }
+                    }
                 }
             }
 

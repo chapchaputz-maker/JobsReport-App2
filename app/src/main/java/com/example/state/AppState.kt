@@ -44,6 +44,8 @@ import com.squareup.moshi.Moshi
 import com.squareup.moshi.Types
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
@@ -513,11 +515,83 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    // Admin Auth State
+    var isAdmin by mutableStateOf(false)
+        private set
+
+    var passcode by mutableStateOf("")
+    var loginError by mutableStateOf("")
+
+    // Modals / Overlays
+    var isMobileMenuOpen by mutableStateOf(false)
+    var isLoginModalOpen by mutableStateOf(false)
+    var isCountryDropdownOpen by mutableStateOf(false)
+    var isNotificationBellOpen by mutableStateOf(false)
+    var isSearchModalOpen by mutableStateOf(false)
+    var searchQuery by mutableStateOf("")
+
+    // Notifications State (Live Backend Sync)
+    var notificationsList by mutableStateOf<List<AppNotification>>(emptyList())
+    var unreadNotificationsCount by mutableStateOf(0)
+    var totalNotificationsCount by mutableStateOf(0)
+    var hasMoreNotifications by mutableStateOf(false)
+    var isNotificationsLoading by mutableStateOf(false)
+    var isNotificationsLoadingMore by mutableStateOf(false)
+    var isMarkingAllNotifications by mutableStateOf(false)
+    var notificationToastMessage by mutableStateOf<String?>(null)
+    var notificationToastIsError by mutableStateOf(false)
+
+    val unreadCount: Int
+        get() = unreadNotificationsCount
+
+    val notifications = mutableStateListOf<NotificationItem>().apply {
+        addAll(sampleNotifications)
+    }
+
+    var uploadError by mutableStateOf<String?>(null)
+
+    private var notificationPollingJob: kotlinx.coroutines.Job? = null
+
     init {
         loadSavedJobs()
         loadCurrentUser()
         fetchDashboardData()
         loadStories()
+    }
+
+    fun startNotificationPolling() {
+        notificationPollingJob?.cancel()
+        val auth = authHeader
+        if (auth.isNullOrBlank()) return
+        notificationPollingJob = viewModelScope.launch(Dispatchers.IO) {
+            while (isActive) {
+                delay(45_000L) // Poll every 45s, matching web NotificationBell interval
+                if (!isActive) break
+                try {
+                    val currentAuth = authHeader
+                    if (!currentAuth.isNullOrBlank()) {
+                        val response = api.getNotifications(auth = currentAuth, limit = 1, offset = 0)
+                        val rawJson = response.string()
+                        if (rawJson.isNotBlank()) {
+                            val json = JSONObject(rawJson)
+                            val unread = json.optInt("unread", -1)
+                            if (unread >= 0) {
+                                withContext(Dispatchers.Main) {
+                                    unreadNotificationsCount = unread
+                                }
+                            }
+                        }
+                    }
+                } catch (_: Exception) {
+                    // silent like web
+                }
+            }
+        }
+    }
+
+    fun stopNotificationPolling() {
+        notificationPollingJob?.cancel()
+        notificationPollingJob = null
     }
 
     fun fetchDashboardData() {
@@ -566,39 +640,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         isCountryDropdownOpen = false
         prefs.edit().putString("selected_country", countryName).apply()
         fetchDashboardData()
-    }
-
-    // Admin Auth State
-    var isAdmin by mutableStateOf(false)
-        private set
-
-    var passcode by mutableStateOf("")
-    var loginError by mutableStateOf("")
-
-    // Modals / Overlays
-    var isMobileMenuOpen by mutableStateOf(false)
-    var isLoginModalOpen by mutableStateOf(false)
-    var isCountryDropdownOpen by mutableStateOf(false)
-    var isNotificationBellOpen by mutableStateOf(false)
-    var isSearchModalOpen by mutableStateOf(false)
-    var searchQuery by mutableStateOf("")
-
-    // Notifications State (Live Backend Sync)
-    var notificationsList by mutableStateOf<List<AppNotification>>(emptyList())
-    var unreadNotificationsCount by mutableStateOf(0)
-    var totalNotificationsCount by mutableStateOf(0)
-    var hasMoreNotifications by mutableStateOf(false)
-    var isNotificationsLoading by mutableStateOf(false)
-    var isNotificationsLoadingMore by mutableStateOf(false)
-    var isMarkingAllNotifications by mutableStateOf(false)
-    var notificationToastMessage by mutableStateOf<String?>(null)
-    var notificationToastIsError by mutableStateOf(false)
-
-    val unreadCount: Int
-        get() = unreadNotificationsCount
-
-    val notifications = mutableStateListOf<NotificationItem>().apply {
-        addAll(sampleNotifications)
     }
 
     fun loadNotifications(offset: Int = 0) {
@@ -861,6 +902,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun handleSessionExpired() {
         android.util.Log.w("AppState", "User session expired or invalidated; resetting token")
         userToken = null
+        stopNotificationPolling()
+        unreadNotificationsCount = 0
         prefs.edit().remove("jobsreport_token").apply()
     }
 
@@ -890,129 +933,138 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     // ═══ FIX B — loadCurrentUser: sanitize all prefs reads so legacy "null" strings
     // are dropped on next launch. No structural changes to the flow.
     private fun loadCurrentUser() {
-        val rawToken = prefs.getString("jobsreport_token", null)
-        val clean = sanitizeJwtToken(rawToken)
+        try {
+            val rawToken = prefs.getString("jobsreport_token", null)
+            val clean = sanitizeJwtToken(rawToken)
 
-        if (clean != null && isTokenExpired(clean)) {
-            android.util.Log.w("AppState", "Stored token is expired; resetting session")
-            handleSessionExpired()
-            currentUser = null
-            return
-        }
+            if (clean != null && isTokenExpired(clean)) {
+                android.util.Log.w("AppState", "Stored token is expired; resetting session")
+                handleSessionExpired()
+                currentUser = null
+                return
+            }
 
-        userToken = clean
-        if (clean != rawToken && clean != null) {
-            prefs.edit().putString("jobsreport_token", clean).apply()
-        }
+            userToken = clean
+            if (clean != rawToken && clean != null) {
+                prefs.edit().putString("jobsreport_token", clean).apply()
+            }
 
-        var savedId = prefs.getString("user_id", null)
-        val extractedId = extractUserIdFromToken(clean)
-        if (!extractedId.isNullOrBlank() && (savedId.isNullOrBlank() || savedId.startsWith("usr_"))) {
-            savedId = extractedId
-            prefs.edit().putString("user_id", extractedId).apply()
-        }
+            var savedId = prefs.getString("user_id", null)
+            val extractedId = extractUserIdFromToken(clean)
+            if (!extractedId.isNullOrBlank() && (savedId.isNullOrBlank() || savedId.startsWith("usr_"))) {
+                savedId = extractedId
+                prefs.edit().putString("user_id", extractedId).apply()
+            }
 
-        val extractedEmail = extractEmailFromToken(clean)
-        var savedName = prefs.getString("user_name", null).cleanDbText()
-        if (savedName.isNullOrBlank() && !extractedEmail.isNullOrBlank()) {
-            savedName = extractedEmail.substringBefore("@").replace(".", " ").replaceFirstChar { it.uppercase() }
-        }
-        val savedUsername = prefs.getString("user_username", null).cleanDbText() ?: extractedEmail?.substringBefore("@")
-        val savedAvatar = prefs.getString("user_avatar", null).cleanDbText()
-        val savedEmail = prefs.getString("user_email", null).cleanDbText() ?: extractedEmail
-        val savedHeadline = prefs.getString("user_headline", null).cleanDbText()
-        val savedLocation = prefs.getString("user_location", null).cleanDbText()
-        val savedBio = prefs.getString("user_bio", null).cleanDbText()
-        val savedWebsite = prefs.getString("user_website", null).cleanDbText()
-        val savedWork = prefs.getString("user_work", null).cleanDbText()
-        val savedEducation = prefs.getString("user_education", null).cleanDbText()
-        val savedCover = prefs.getString("user_cover", null).cleanDbText()
-        val isVerifiedInt = prefs.getInt("user_is_verified", 0)
+            val extractedEmail = extractEmailFromToken(clean)
+            var savedName = prefs.getString("user_name", null).cleanDbText()
+            if (savedName.isNullOrBlank() && !extractedEmail.isNullOrBlank()) {
+                savedName = extractedEmail.substringBefore("@").replace(".", " ").replaceFirstChar { it.uppercase() }
+            }
+            val savedUsername = prefs.getString("user_username", null).cleanDbText() ?: extractedEmail?.substringBefore("@")
+            val savedAvatar = prefs.getString("user_avatar", null).cleanDbText()
+            val savedEmail = prefs.getString("user_email", null).cleanDbText() ?: extractedEmail
+            val savedHeadline = prefs.getString("user_headline", null).cleanDbText()
+            val savedLocation = prefs.getString("user_location", null).cleanDbText()
+            val savedBio = prefs.getString("user_bio", null).cleanDbText()
+            val savedWebsite = prefs.getString("user_website", null).cleanDbText()
+            val savedWork = prefs.getString("user_work", null).cleanDbText()
+            val savedEducation = prefs.getString("user_education", null).cleanDbText()
+            val savedCover = prefs.getString("user_cover", null).cleanDbText()
+            val isVerifiedInt = runCatching { prefs.getInt("user_is_verified", 0) }.getOrDefault(0)
 
-        val effectiveId = savedId?.takeIf { it.isNotBlank() }
-            ?: extractedId?.takeIf { it.isNotBlank() }
-            ?: if (!clean.isNullOrBlank()) "user_me" else ""
-        val effectiveName = savedName?.takeIf { it.isNotBlank() } ?: "User"
+            val effectiveId = savedId?.takeIf { it.isNotBlank() }
+                ?: extractedId?.takeIf { it.isNotBlank() }
+                ?: if (!clean.isNullOrBlank()) "user_me" else ""
+            val effectiveName = savedName?.takeIf { it.isNotBlank() } ?: "User"
 
-        if (!clean.isNullOrBlank() && effectiveId.isNotBlank()) {
-            currentUser = StoryUser(
-                id = effectiveId,
-                name = effectiveName,
-                username = savedUsername,
-                email = savedEmail,
-                profileImageUrl = savedAvatar,
-                coverImageUrl = savedCover,
-                headline = savedHeadline,
-                location = savedLocation,
-                bio = savedBio,
-                work = savedWork,
-                education = savedEducation,
-                website = savedWebsite,
-                isVerified = isVerifiedInt,
-                followersCount = prefs.getInt("user_followers", 0),
-                followingCount = prefs.getInt("user_following", 0),
-                jobsCount = prefs.getInt("user_jobs_count", 0),
-                storiesCount = prefs.getInt("user_stories_count", 0),
-                jobAdvertsCount = prefs.getInt("user_job_adverts", 0),
-                joinedDate = prefs.getString("user_joined_date", null),
-                skills = emptyList()
-            )
-            viewModelScope.launch {
-                try {
-                    val meResp = api.getAuthUserMe("Bearer $clean")
-                    val meJsonStr = meResp.string()
-                    val meJson = JSONObject(meJsonStr)
-                    val userObj = meJson.optJSONObject("user")
-                    if (userObj != null) {
-                        // ═══ FIX B — use safeStr() so JSON null doesn't become "null"
-                        val liveUser = StoryUser(
-                            id = userObj.safeStr("id") ?: effectiveId,
-                            name = userObj.safeStr("name") ?: effectiveName,
-                            username = userObj.safeStr("username") ?: savedUsername,
-                            email = userObj.safeStr("email") ?: savedEmail,
-                            profileImageUrl = userObj.safeStr("profile_image_url") ?: userObj.safeStr("avatar") ?: savedAvatar,
-                            coverImageUrl = userObj.safeStr("cover_image_url") ?: savedCover,
-                            headline = userObj.safeStr("headline") ?: savedHeadline,
-                            bio = userObj.safeStr("bio") ?: savedBio,
-                            work = userObj.safeStr("work") ?: savedWork,
-                            education = userObj.safeStr("education") ?: savedEducation,
-                            location = userObj.safeStr("location") ?: savedLocation,
-                            website = userObj.safeStr("website") ?: savedWebsite,
-                            country = userObj.safeStr("country"),
-                            role = userObj.safeStr("role"),
-                            isVerified = userObj.opt("is_verified") ?: userObj.opt("isVerified"),
-                            followersCount = userObj.optInt("followers_count", prefs.getInt("user_followers", 0)),
-                            followingCount = userObj.optInt("following_count", prefs.getInt("user_following", 0)),
-                            jobsCount = userObj.optInt("jobs_count", prefs.getInt("user_jobs_count", 0)),
-                            storiesCount = userObj.optInt("stories_count", prefs.getInt("user_stories_count", 0)),
-                            isFollowing = false
-                        )
-                        withContext(Dispatchers.Main) {
-                            currentUser = liveUser
-                            prefs.edit()
-                                .putString("user_id", liveUser.id)
-                                .putString("user_name", liveUser.name)
-                                .putString("user_username", liveUser.username)
-                                .putString("user_avatar", liveUser.profileImageUrl)
-                                .putString("user_cover", liveUser.coverImageUrl)
-                                .putString("user_email", liveUser.email)
-                                .putString("user_headline", liveUser.headline)
-                                .putString("user_location", liveUser.location)
-                                .putString("user_bio", liveUser.bio)
-                                .putString("user_work", liveUser.work)
-                                .putString("user_education", liveUser.education)
-                                .putString("user_website", liveUser.website)
-                                .putInt("user_is_verified", if (liveUser.isUserVerified) 1 else 0)
-                                .apply()
+            if (!clean.isNullOrBlank() && effectiveId.isNotBlank()) {
+                currentUser = StoryUser(
+                    id = effectiveId,
+                    name = effectiveName,
+                    username = savedUsername,
+                    email = savedEmail,
+                    profileImageUrl = savedAvatar,
+                    coverImageUrl = savedCover,
+                    headline = savedHeadline,
+                    location = savedLocation,
+                    bio = savedBio,
+                    work = savedWork,
+                    education = savedEducation,
+                    website = savedWebsite,
+                    isVerified = isVerifiedInt,
+                    followersCount = runCatching { prefs.getInt("user_followers", 0) }.getOrDefault(0),
+                    followingCount = runCatching { prefs.getInt("user_following", 0) }.getOrDefault(0),
+                    jobsCount = runCatching { prefs.getInt("user_jobs_count", 0) }.getOrDefault(0),
+                    storiesCount = runCatching { prefs.getInt("user_stories_count", 0) }.getOrDefault(0),
+                    jobAdvertsCount = runCatching { prefs.getInt("user_job_adverts", 0) }.getOrDefault(0),
+                    joinedDate = prefs.getString("user_joined_date", null),
+                    skills = emptyList()
+                )
+                viewModelScope.launch {
+                    try {
+                        val meResp = api.getAuthUserMe("Bearer $clean")
+                        val meJsonStr = meResp.string()
+                        val meJson = JSONObject(meJsonStr)
+                        val userObj = meJson.optJSONObject("user")
+                        if (userObj != null) {
+                            // ═══ FIX B — use safeStr() so JSON null doesn't become "null"
+                            val liveUser = StoryUser(
+                                id = userObj.safeStr("id") ?: effectiveId,
+                                name = userObj.safeStr("name") ?: effectiveName,
+                                username = userObj.safeStr("username") ?: savedUsername,
+                                email = userObj.safeStr("email") ?: savedEmail,
+                                profileImageUrl = userObj.safeStr("profile_image_url") ?: userObj.safeStr("avatar") ?: savedAvatar,
+                                coverImageUrl = userObj.safeStr("cover_image_url") ?: savedCover,
+                                headline = userObj.safeStr("headline") ?: savedHeadline,
+                                bio = userObj.safeStr("bio") ?: savedBio,
+                                work = userObj.safeStr("work") ?: savedWork,
+                                education = userObj.safeStr("education") ?: savedEducation,
+                                location = userObj.safeStr("location") ?: savedLocation,
+                                website = userObj.safeStr("website") ?: savedWebsite,
+                                country = userObj.safeStr("country"),
+                                role = userObj.safeStr("role"),
+                                isVerified = userObj.opt("is_verified") ?: userObj.opt("isVerified"),
+                                followersCount = userObj.optInt("followers_count", runCatching { prefs.getInt("user_followers", 0) }.getOrDefault(0)),
+                                followingCount = userObj.optInt("following_count", runCatching { prefs.getInt("user_following", 0) }.getOrDefault(0)),
+                                jobsCount = userObj.optInt("jobs_count", runCatching { prefs.getInt("user_jobs_count", 0) }.getOrDefault(0)),
+                                storiesCount = userObj.optInt("stories_count", runCatching { prefs.getInt("user_stories_count", 0) }.getOrDefault(0)),
+                                isFollowing = false
+                            )
+                            withContext(Dispatchers.Main) {
+                                currentUser = liveUser
+                                prefs.edit()
+                                    .putString("user_id", liveUser.id)
+                                    .putString("user_name", liveUser.name)
+                                    .putString("user_username", liveUser.username)
+                                    .putString("user_avatar", liveUser.profileImageUrl)
+                                    .putString("user_cover", liveUser.coverImageUrl)
+                                    .putString("user_email", liveUser.email)
+                                    .putString("user_headline", liveUser.headline)
+                                    .putString("user_location", liveUser.location)
+                                    .putString("user_bio", liveUser.bio)
+                                    .putString("user_work", liveUser.work)
+                                    .putString("user_education", liveUser.education)
+                                    .putString("user_website", liveUser.website)
+                                    .putInt("user_is_verified", if (liveUser.isUserVerified) 1 else 0)
+                                    .apply()
+                            }
                         }
-                    }
-                } catch (e: retrofit2.HttpException) {
-                    if (e.code() == 401 || e.code() == 403) {
-                        withContext(Dispatchers.Main) {
-                            handleSessionExpired()
-                            currentUser = null
+                    } catch (e: retrofit2.HttpException) {
+                        if (e.code() == 401 || e.code() == 403) {
+                            withContext(Dispatchers.Main) {
+                                handleSessionExpired()
+                                currentUser = null
+                            }
+                        } else {
+                            val liveUser = fetchUserProfile(effectiveId)
+                            if (liveUser != null) {
+                                withContext(Dispatchers.Main) {
+                                    currentUser = liveUser
+                                }
+                            }
                         }
-                    } else {
+                    } catch (_: Exception) {
                         val liveUser = fetchUserProfile(effectiveId)
                         if (liveUser != null) {
                             withContext(Dispatchers.Main) {
@@ -1020,18 +1072,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                             }
                         }
                     }
-                } catch (_: Exception) {
-                    val liveUser = fetchUserProfile(effectiveId)
-                    if (liveUser != null) {
-                        withContext(Dispatchers.Main) {
-                            currentUser = liveUser
-                        }
-                    }
                 }
+                loadNotifications(0)
+                startNotificationPolling()
+            } else {
+                currentUser = null
             }
-            loadNotifications(0)
-        } else {
-            currentUser = null
+        } catch (e: Exception) {
+            android.util.Log.e("AppState", "loadCurrentUser encountered error", e)
         }
     }
 
@@ -1122,6 +1170,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 prefs.edit().putString("jobsreport_token", cleanTok).apply()
             }
             loadNotifications(0)
+            startNotificationPolling()
         }
         val isVerifiedInt = if (updated.isUserVerified) 1 else 0
         prefs.edit()
@@ -1368,6 +1417,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         isAdmin = false
         userToken = null
         currentUser = null
+        stopNotificationPolling()
         notificationsList = emptyList()
         unreadNotificationsCount = 0
         prefs.edit()
@@ -1814,7 +1864,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    var uploadError by mutableStateOf<String?>(null)
 
     // ═══ FIX A — uploadImage: check auth FIRST, wrap compressor with a specific
     // error, surface HttpException code/body, log the raw response, parse url/dataUrl.
