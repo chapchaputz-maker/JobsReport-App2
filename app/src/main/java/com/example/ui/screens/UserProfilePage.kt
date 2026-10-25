@@ -3,7 +3,6 @@ package com.example.ui.screens
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
-import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -33,9 +32,6 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -54,16 +50,13 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Forum
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.PersonAdd
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.School
 import androidx.compose.material.icons.filled.Share
-import androidx.compose.material.icons.filled.Verified
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.filled.Work
@@ -108,7 +101,6 @@ import com.example.data.isUserVerified
 import com.example.state.AppViewModel
 import com.example.state.NavRoute
 import com.example.ui.components.VerifiedBadge
-import com.example.util.ImageCompressor
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -122,19 +114,26 @@ private const val TOP_STORIES_COUNT = 5
 private val PageDarkBg = Color(0xFF050B18)
 private val DialogDarkBg = Color(0xFF0B1120)
 private val BrandBlue = Color(0xFF1877F2)
-private val BrandBlueHover = Color(0xFF166FE5)
 private val BrandPurple = Color(0xFF7B4DFF)
 private val BrandPurpleEnd = Color(0xFFA033FF)
 private val BrandCyan = Color(0xFF4A9EFF)
 private val EmeraldText = Color(0xFF34D399)
 private val CardBorderColor = Color(0x1AFFFFFF)
-private val SubBorderColor = Color(0x0FFFFFFF)
 private val CardBg = Color(0x05FFFFFF)
 private val TextWhite = Color(0xFFFFFFFF)
 private val TextGray300 = Color(0xFFD1D5DB)
 private val TextGray400 = Color(0xFF9CA3AF)
 private val TextGray500 = Color(0xFF6B7280)
 private val TextGray600 = Color(0xFF4B5563)
+
+// ═══ FIX B — sanitizer, mirror of the one in AppState.kt
+private fun String?.cleanText(): String? {
+    if (this == null) return null
+    val t = this.trim()
+    if (t.isEmpty()) return null
+    if (t.equals("null", ignoreCase = true)) return null
+    return t
+}
 
 // ============================================================
 // HELPERS
@@ -208,7 +207,6 @@ fun UserProfilePage(
     var jobs by remember { mutableStateOf<List<JobOpportunity>>(emptyList()) }
     var stories by remember { mutableStateOf<List<StoryType>>(emptyList()) }
 
-    var loading by remember { mutableStateOf(false) }
     var activeTab by remember { mutableStateOf("jobs") }
     var isEditing by remember { mutableStateOf(false) }
     var following by remember(user?.id) {
@@ -223,7 +221,7 @@ fun UserProfilePage(
     var jobToDelete by remember { mutableStateOf<JobOpportunity?>(null) }
     var shareToast by remember { mutableStateOf<String?>(null) }
 
-    // ── Upload state ─────────────────────────────────────────
+    // Upload state
     var uploadingCover by remember { mutableStateOf(false) }
     var uploadingAvatar by remember { mutableStateOf(false) }
     var uploadingDialogCover by remember { mutableStateOf(false) }
@@ -250,7 +248,6 @@ fun UserProfilePage(
 
     LaunchedEffect(baseUser?.id) {
         if (baseUser != null) {
-            loading = true
             val fetchedUser = viewModel.fetchUserProfile(baseUser.id)
             if (fetchedUser != null) {
                 user = fetchedUser
@@ -258,7 +255,6 @@ fun UserProfilePage(
             }
             jobs = viewModel.fetchUserJobs(baseUser.id)
             stories = viewModel.stories.filter { it.userId == baseUser.id && !isStoryExpired(it) }
-            loading = false
         }
     }
 
@@ -337,7 +333,10 @@ fun UserProfilePage(
         return
     }
 
-    // ── Image picker launcher (routes by pickTarget) ─────────
+    // ═══ FIX A + C — picker callback:
+    //  - preserves spinner reset in all code paths
+    //  - prefers freshly-uploaded URL over stale ViewModel currentUser
+    //  - updates BOTH user state and viewModel.currentUser / viewingProfileUser
     val imagePicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia()
     ) { uri: Uri? ->
@@ -345,71 +344,107 @@ fun UserProfilePage(
         pickTarget = null
         if (uri == null || target == null) return@rememberLauncherForActivityResult
 
+        fun commitUpload(url: String, isCover: Boolean, dialogMode: Boolean) {
+            if (dialogMode) {
+                if (isCover) pendingCoverUrl = url else pendingAvatarUrl = url
+                return
+            }
+            // Persist and update both local state and the ViewModel
+            scope.launch {
+                try {
+                    val saved = viewModel.saveProfileApi(
+                        avatarUrl = if (isCover) null else url,
+                        coverUrl = if (isCover) url else null
+                    )
+                    if (!saved) {
+                        shareToast = "Uploaded but failed to save to profile"
+                        return@launch
+                    }
+                    // Prefer local copy so we don't read stale ViewModel data
+                    val updated = user?.copy(
+                        profileImageUrl = if (isCover) user?.profileImageUrl else url,
+                        coverImageUrl = if (isCover) url else user?.coverImageUrl
+                    ) ?: viewModel.currentUser
+                    if (updated != null) {
+                        user = updated
+                        viewModel.viewingProfileUser = updated
+                        if (viewModel.currentUser?.id == updated.id) {
+                            viewModel.currentUser = updated
+                        }
+                    }
+                    shareToast = if (isCover) "Cover updated!" else "Avatar updated!"
+                } finally {
+                    // always reset spinner
+                    if (isCover) uploadingCover = false else uploadingAvatar = false
+                }
+            }
+        }
+
         when (target) {
             "cover" -> {
                 uploadingCover = true
                 scope.launch {
                     val url = viewModel.uploadImage(context, uri)
-                    if (url != null) {
-                        val ok = viewModel.saveProfileApi(coverUrl = url)
-                        if (ok) {
-                            val updated = viewModel.currentUser ?: user?.copy(coverImageUrl = url)
-                            user = updated
-                            if (viewModel.viewingProfileUser?.id == updated?.id) {
-                                viewModel.viewingProfileUser = updated
-                            }
-                            shareToast = "Cover updated!"
-                        } else {
-                            shareToast = "Failed to save cover to database"
-                        }
-                    } else {
+                    if (url == null) {
                         shareToast = viewModel.uploadError ?: "Cover upload failed"
+                        uploadingCover = false
+                        return@launch
                     }
-                    uploadingCover = false
+                    commitUpload(url, isCover = true, dialogMode = false)
                 }
             }
             "avatar" -> {
                 uploadingAvatar = true
                 scope.launch {
                     val url = viewModel.uploadImage(context, uri)
-                    if (url != null) {
-                        val ok = viewModel.saveProfileApi(avatarUrl = url)
-                        if (ok) {
-                            val updated = viewModel.currentUser ?: user?.copy(profileImageUrl = url)
-                            user = updated
-                            if (viewModel.viewingProfileUser?.id == updated?.id) {
-                                viewModel.viewingProfileUser = updated
-                            }
-                            shareToast = "Avatar updated!"
-                        } else {
-                            shareToast = "Failed to save avatar to database"
-                        }
-                    } else {
+                    if (url == null) {
                         shareToast = viewModel.uploadError ?: "Avatar upload failed"
+                        uploadingAvatar = false
+                        return@launch
                     }
-                    uploadingAvatar = false
+                    commitUpload(url, isCover = false, dialogMode = false)
                 }
             }
             "dialogCover" -> {
                 uploadingDialogCover = true
                 scope.launch {
-                    val url = viewModel.uploadImage(context, uri)
-                    if (url != null) pendingCoverUrl = url
-                    else shareToast = viewModel.uploadError ?: "Cover upload failed"
-                    uploadingDialogCover = false
+                    try {
+                        val url = viewModel.uploadImage(context, uri)
+                        if (url != null) {
+                            pendingCoverUrl = url
+                        } else {
+                            shareToast = viewModel.uploadError ?: "Cover upload failed"
+                        }
+                    } finally {
+                        uploadingDialogCover = false
+                    }
                 }
             }
             "dialogAvatar" -> {
                 uploadingDialogAvatar = true
                 scope.launch {
-                    val url = viewModel.uploadImage(context, uri)
-                    if (url != null) pendingAvatarUrl = url
-                    else shareToast = viewModel.uploadError ?: "Avatar upload failed"
-                    uploadingDialogAvatar = false
+                    try {
+                        val url = viewModel.uploadImage(context, uri)
+                        if (url != null) {
+                            pendingAvatarUrl = url
+                        } else {
+                            shareToast = viewModel.uploadError ?: "Avatar upload failed"
+                        }
+                    } finally {
+                        uploadingDialogAvatar = false
+                    }
                 }
             }
         }
     }
+
+    // ═══ FIX B — sanitize display values so "null" never renders as text
+    val safeHeadline = displayUser.headline.cleanText()
+    val safeBio = displayUser.bio.cleanText()
+    val safeWork = displayUser.work.cleanText()
+    val safeEducation = displayUser.education.cleanText()
+    val safeLocation = displayUser.location.cleanText()
+    val safeWebsite = displayUser.website.cleanText()
 
     val handle = if (!displayUser.username.isNullOrBlank()) "@${displayUser.username}" else (displayUser.email?.substringBefore("@")?.let { "@$it" } ?: "@user")
     val avatar = if (!displayUser.profileImageUrl.isNullOrBlank()) displayUser.profileImageUrl!! else getDefaultAvatar(displayUser.name, displayUser.id)
@@ -602,9 +637,9 @@ fun UserProfilePage(
                         }
 
                         Column(modifier = Modifier.offset(y = (-36).dp)) {
-                            if (!displayUser.headline.isNullOrBlank()) {
+                            if (!safeHeadline.isNullOrBlank()) {
                                 Text(
-                                    text = displayUser.headline!!,
+                                    text = safeHeadline,
                                     color = TextWhite,
                                     fontSize = 15.sp,
                                     fontWeight = FontWeight.SemiBold,
@@ -612,9 +647,9 @@ fun UserProfilePage(
                                     modifier = Modifier.padding(top = 2.dp)
                                 )
                             }
-                            if (!displayUser.bio.isNullOrBlank()) {
+                            if (!safeBio.isNullOrBlank()) {
                                 Text(
-                                    text = displayUser.bio!!,
+                                    text = safeBio,
                                     color = TextGray300,
                                     fontSize = 14.sp,
                                     lineHeight = 20.sp,
@@ -630,16 +665,16 @@ fun UserProfilePage(
                                 horizontalArrangement = Arrangement.spacedBy(14.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                if (!displayUser.work.isNullOrBlank()) InfoTag(icon = Icons.Default.Work, text = displayUser.work!!)
-                                if (!displayUser.education.isNullOrBlank()) InfoTag(icon = Icons.Default.School, text = displayUser.education!!)
-                                if (!displayUser.location.isNullOrBlank()) InfoTag(icon = Icons.Default.LocationOn, text = displayUser.location!!)
-                                if (!displayUser.website.isNullOrBlank()) {
-                                    val cleanUrl = displayUser.website!!.removePrefix("https://").removePrefix("http://")
+                                if (!safeWork.isNullOrBlank()) InfoTag(icon = Icons.Default.Work, text = safeWork)
+                                if (!safeEducation.isNullOrBlank()) InfoTag(icon = Icons.Default.School, text = safeEducation)
+                                if (!safeLocation.isNullOrBlank()) InfoTag(icon = Icons.Default.LocationOn, text = safeLocation)
+                                if (!safeWebsite.isNullOrBlank()) {
+                                    val cleanUrl = safeWebsite.removePrefix("https://").removePrefix("http://")
                                     Row(
                                         verticalAlignment = Alignment.CenterVertically,
                                         modifier = Modifier.clickable {
                                             try {
-                                                val uri = if (displayUser.website!!.startsWith("http")) Uri.parse(displayUser.website) else Uri.parse("https://${displayUser.website}")
+                                                val uri = if (safeWebsite.startsWith("http")) Uri.parse(safeWebsite) else Uri.parse("https://$safeWebsite")
                                                 context.startActivity(Intent(Intent.ACTION_VIEW, uri))
                                             } catch (_: Exception) {}
                                         }
@@ -995,12 +1030,12 @@ fun UserProfilePage(
                                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
                                 verticalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
-                                AboutCard(Icons.Default.Forum, "Bio", displayUser.bio ?: if (isOwnProfile) "Add a short bio" else "No bio available", displayUser.bio.isNullOrBlank(), onClick = if (isOwnProfile && displayUser.bio.isNullOrBlank()) { { if (viewModel.userToken.isNullOrBlank()) { viewModel.openAuth(); shareToast = "Please sign in first" } else isEditing = true } } else null)
-                                AboutCard(Icons.Default.Work, "Work", displayUser.work ?: if (isOwnProfile) "Add current company" else "Not specified", displayUser.work.isNullOrBlank(), onClick = if (isOwnProfile && displayUser.work.isNullOrBlank()) { { if (viewModel.userToken.isNullOrBlank()) { viewModel.openAuth(); shareToast = "Please sign in first" } else isEditing = true } } else null)
-                                AboutCard(Icons.Default.School, "Education", displayUser.education ?: if (isOwnProfile) "Add education" else "Not specified", displayUser.education.isNullOrBlank(), onClick = if (isOwnProfile && displayUser.education.isNullOrBlank()) { { if (viewModel.userToken.isNullOrBlank()) { viewModel.openAuth(); shareToast = "Please sign in first" } else isEditing = true } } else null)
-                                AboutCard(Icons.Default.LocationOn, "Location", displayUser.location ?: if (isOwnProfile) "Add location" else "Not specified", displayUser.location.isNullOrBlank(), onClick = if (isOwnProfile && displayUser.location.isNullOrBlank()) { { if (viewModel.userToken.isNullOrBlank()) { viewModel.openAuth(); shareToast = "Please sign in first" } else isEditing = true } } else null)
-                                if (!displayUser.website.isNullOrBlank()) {
-                                    AboutCard(Icons.Default.Language, "Website", displayUser.website!!, false, link = displayUser.website!!)
+                                AboutCard(Icons.Default.Forum, "Bio", safeBio ?: if (isOwnProfile) "Add a short bio" else "No bio available", safeBio.isNullOrBlank(), onClick = if (isOwnProfile && safeBio.isNullOrBlank()) { { if (viewModel.userToken.isNullOrBlank()) { viewModel.openAuth(); shareToast = "Please sign in first" } else isEditing = true } } else null)
+                                AboutCard(Icons.Default.Work, "Work", safeWork ?: if (isOwnProfile) "Add current company" else "Not specified", safeWork.isNullOrBlank(), onClick = if (isOwnProfile && safeWork.isNullOrBlank()) { { if (viewModel.userToken.isNullOrBlank()) { viewModel.openAuth(); shareToast = "Please sign in first" } else isEditing = true } } else null)
+                                AboutCard(Icons.Default.School, "Education", safeEducation ?: if (isOwnProfile) "Add education" else "Not specified", safeEducation.isNullOrBlank(), onClick = if (isOwnProfile && safeEducation.isNullOrBlank()) { { if (viewModel.userToken.isNullOrBlank()) { viewModel.openAuth(); shareToast = "Please sign in first" } else isEditing = true } } else null)
+                                AboutCard(Icons.Default.LocationOn, "Location", safeLocation ?: if (isOwnProfile) "Add location" else "Not specified", safeLocation.isNullOrBlank(), onClick = if (isOwnProfile && safeLocation.isNullOrBlank()) { { if (viewModel.userToken.isNullOrBlank()) { viewModel.openAuth(); shareToast = "Please sign in first" } else isEditing = true } } else null)
+                                if (!safeWebsite.isNullOrBlank()) {
+                                    AboutCard(Icons.Default.Language, "Website", safeWebsite, false, link = safeWebsite)
                                 }
                                 AboutCard(
                                     Icons.Default.CalendarToday, "Joined",
@@ -1042,7 +1077,8 @@ fun UserProfilePage(
             }
         }
 
-        // EDIT PROFILE DIALOG
+        // ═══ FIX B + C — Edit Profile dialog now seeds from sanitized values
+        // and passes "" (not null) for cleared fields.
         if (isEditing) {
             EditProfileDialog(
                 user = displayUser,
@@ -1081,26 +1117,43 @@ fun UserProfilePage(
                     }
                     scope.launch {
                         val ok = viewModel.saveProfileApi(
-                            name = name, headline = headline, bio = bio, work = work,
-                            education = education, location = location, website = website,
-                            avatarUrl = avatarUrl, coverUrl = coverUrl
+                            name = name,
+                            headline = headline,
+                            bio = bio,
+                            work = work,
+                            education = education,
+                            location = location,
+                            website = website,
+                            avatarUrl = avatarUrl,
+                            coverUrl = coverUrl
                         )
                         if (ok) {
-                            val updated = viewModel.currentUser ?: user?.copy(
-                                name = name, headline = headline, bio = bio, work = work,
-                                education = education, location = location, website = website,
-                                profileImageUrl = avatarUrl, coverImageUrl = coverUrl
-                            )
-                            user = updated
-                            if (viewModel.viewingProfileUser?.id == updated?.id) {
+                            // Mirror in local state so the page reflects the change immediately,
+                            // even before ViewModel's next refresh.
+                            val updated = user?.copy(
+                                name = name,
+                                headline = headline.cleanText(),
+                                bio = bio.cleanText(),
+                                work = work.cleanText(),
+                                education = education.cleanText(),
+                                location = location.cleanText(),
+                                website = website.cleanText(),
+                                profileImageUrl = avatarUrl ?: user?.profileImageUrl,
+                                coverImageUrl = coverUrl ?: user?.coverImageUrl
+                            ) ?: viewModel.currentUser
+                            if (updated != null) {
+                                user = updated
                                 viewModel.viewingProfileUser = updated
+                                if (viewModel.currentUser?.id == updated.id) {
+                                    viewModel.currentUser = updated
+                                }
                             }
                             isEditing = false
                             pendingCoverUrl = null
                             pendingAvatarUrl = null
                             shareToast = "Profile saved!"
                         } else {
-                            shareToast = "Failed to save profile to database"
+                            shareToast = "Failed to save profile"
                         }
                     }
                 }
@@ -1493,7 +1546,7 @@ private fun EmptyState(
 }
 
 // ============================================================
-// EDIT PROFILE DIALOG — with cover/avatar upload buttons
+// EDIT PROFILE DIALOG
 // ============================================================
 @Composable
 private fun EditProfileDialog(
@@ -1505,17 +1558,28 @@ private fun EditProfileDialog(
     onPickCover: () -> Unit,
     onPickAvatar: () -> Unit,
     onClose: () -> Unit,
-    onSave: (name: String, headline: String?, bio: String?, work: String?, education: String?, location: String?, website: String?, avatarUrl: String?, coverUrl: String?) -> Unit
+    onSave: (
+        name: String,
+        headline: String,
+        bio: String,
+        work: String,
+        education: String,
+        location: String,
+        website: String,
+        avatarUrl: String?,
+        coverUrl: String?
+    ) -> Unit
 ) {
-    var name by remember { mutableStateOf(user.name) }
-    var headline by remember { mutableStateOf(user.headline.orEmpty()) }
-    var bio by remember { mutableStateOf(user.bio.orEmpty()) }
-    var work by remember { mutableStateOf(user.work.orEmpty()) }
-    var education by remember { mutableStateOf(user.education.orEmpty()) }
-    var location by remember { mutableStateOf(user.location.orEmpty()) }
-    var website by remember { mutableStateOf(user.website.orEmpty()) }
-    var avatarUrl by remember(initialAvatarUrl) { mutableStateOf(initialAvatarUrl.orEmpty()) }
-    var coverUrl by remember(initialCoverUrl) { mutableStateOf(initialCoverUrl.orEmpty()) }
+    // ═══ FIX B — seed from sanitized values so the field starts empty, never "null"
+    var name by remember(user.id) { mutableStateOf(user.name.cleanText().orEmpty()) }
+    var headline by remember(user.id) { mutableStateOf(user.headline.cleanText().orEmpty()) }
+    var bio by remember(user.id) { mutableStateOf(user.bio.cleanText().orEmpty()) }
+    var work by remember(user.id) { mutableStateOf(user.work.cleanText().orEmpty()) }
+    var education by remember(user.id) { mutableStateOf(user.education.cleanText().orEmpty()) }
+    var location by remember(user.id) { mutableStateOf(user.location.cleanText().orEmpty()) }
+    var website by remember(user.id) { mutableStateOf(user.website.cleanText().orEmpty()) }
+    var avatarUrl by remember(initialAvatarUrl) { mutableStateOf(initialAvatarUrl.cleanText().orEmpty()) }
+    var coverUrl by remember(initialCoverUrl) { mutableStateOf(initialCoverUrl.cleanText().orEmpty()) }
     var error by remember { mutableStateOf<String?>(null) }
 
     Dialog(onDismissRequest = onClose) {
@@ -1574,7 +1638,6 @@ private fun EditProfileDialog(
                     modifier = Modifier.fillMaxWidth().offset(y = (-16).dp).padding(horizontal = 20.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    // Change cover / Change avatar buttons
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Row(
                             modifier = Modifier
@@ -1632,14 +1695,16 @@ private fun EditProfileDialog(
                                 .weight(1f).height(44.dp).clip(RoundedCornerShape(12.dp))
                                 .background(BrandBlue).clickable {
                                     if (name.isBlank()) { error = "Name is required"; return@clickable }
+                                    // ═══ FIX B + C — send "" for text fields so clearing works.
+                                    // URL fields still send null when empty so the DB doesn't get "".
                                     onSave(
                                         name.trim(),
-                                        headline.trim().ifBlank { null },
-                                        bio.trim().ifBlank { null },
-                                        work.trim().ifBlank { null },
-                                        education.trim().ifBlank { null },
-                                        location.trim().ifBlank { null },
-                                        website.trim().ifBlank { null },
+                                        headline.trim(),
+                                        bio.trim(),
+                                        work.trim(),
+                                        education.trim(),
+                                        location.trim(),
+                                        website.trim(),
                                         avatarUrl.trim().ifBlank { null },
                                         coverUrl.trim().ifBlank { null }
                                     )
