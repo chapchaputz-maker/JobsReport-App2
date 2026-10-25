@@ -2,6 +2,9 @@ package com.example.ui.screens
 
 import android.app.DatePickerDialog
 import android.net.Uri
+import android.webkit.JavascriptInterface
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -19,6 +22,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -28,6 +32,8 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
@@ -39,7 +45,6 @@ import androidx.compose.material.icons.filled.Business
 import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Description
@@ -50,6 +55,7 @@ import androidx.compose.material.icons.filled.FormatListBulleted
 import androidx.compose.material.icons.filled.FormatListNumbered
 import androidx.compose.material.icons.filled.FormatUnderlined
 import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.Search
@@ -64,6 +70,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -77,16 +84,20 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
 import coil.compose.AsyncImage
 import com.example.data.Company
-import com.example.data.JobAttachment
 import com.example.data.JobOpportunity
 import com.example.state.AppViewModel
 import com.example.state.NavRoute
@@ -143,12 +154,8 @@ fun UserJobInputScreen(
     val editingJob = viewModel.editingJob
     val isEditing = editingJob != null
 
-    // Back button behavior
-    BackHandler {
-        onClose()
-    }
+    BackHandler { onClose() }
 
-    // Auth guard: If user not logged in, prompt sign in and close
     LaunchedEffect(viewModel.userToken) {
         if (viewModel.userToken == null) {
             viewModel.openAuth()
@@ -158,7 +165,6 @@ fun UserJobInputScreen(
 
     val profileWork = authUser?.work?.trim().orEmpty()
 
-    // Flow State
     var step by remember {
         mutableStateOf(
             if (isEditing || profileWork.isNotBlank()) JobInputStep.JOB_FORM
@@ -169,12 +175,10 @@ fun UserJobInputScreen(
         mutableStateOf(editingJob?.company ?: profileWork)
     }
 
-    // Company & Role Catalogs
     var companies by remember { mutableStateOf<List<Company>>(emptyList()) }
     var categories by remember { mutableStateOf<List<String>>(emptyList()) }
     var loadingCatalog by remember { mutableStateOf(true) }
 
-    // Alert Messages
     var messageText by remember { mutableStateOf<String?>(null) }
     var messageIsError by remember { mutableStateOf(false) }
 
@@ -187,7 +191,6 @@ fun UserJobInputScreen(
         }
     }
 
-    // Load companies and categories from backend
     LaunchedEffect(Unit) {
         loadingCatalog = true
         val compList = viewModel.fetchAllCompaniesCatalog()
@@ -218,7 +221,6 @@ fun UserJobInputScreen(
     var location by remember { mutableStateOf(editingJob?.location ?: "Dar es Salaam") }
     var salary by remember { mutableStateOf(editingJob?.salary ?: "Not Disclosed") }
 
-    // Expiry date (default 30 days from now)
     val defaultExpiry = remember {
         val cal = Calendar.getInstance()
         cal.add(Calendar.DAY_OF_YEAR, 30)
@@ -228,7 +230,6 @@ fun UserJobInputScreen(
         mutableStateOf(editingJob?.expiresAt?.take(10) ?: defaultExpiry)
     }
 
-    // Application Type: 'url' | 'email' | 'whatsapp' | 'instructions'
     var applicationType by remember {
         mutableStateOf(
             when {
@@ -250,23 +251,20 @@ fun UserJobInputScreen(
         )
     }
 
-    // Locations
     var streetAddress by remember { mutableStateOf(editingJob?.streetAddress ?: "Mwai Kibaki Road") }
     var city by remember { mutableStateOf(editingJob?.city ?: "Dar es Salaam") }
     var region by remember { mutableStateOf(editingJob?.region ?: "Kinondoni") }
     var country by remember { mutableStateOf(editingJob?.country ?: "Tanzania") }
     var postcode by remember { mutableStateOf(editingJob?.postcode ?: "14111") }
 
-    // Description & Editor Mode
     var description by remember {
         mutableStateOf(
             editingJob?.description
                 ?: "<h3>Role Overview</h3><p>We are looking for a dedicated and experienced professional to join our team.</p><h3>Key Responsibilities</h3><ul><li>Execute core initiatives and project deliverables</li><li>Collaborate cross-functionally with team members</li></ul><h3>Requirements</h3><ul><li>Relevant education or equivalent practical experience</li><li>Strong communication and problem-solving skills</li></ul>"
         )
     }
-    var descEditMode by remember { mutableStateOf("visual") } // "visual" | "html"
+    var descEditMode by remember { mutableStateOf("visual") }
 
-    // Attachments
     val attachments = remember {
         mutableStateListOf<JobAttachmentItem>().apply {
             editingJob?.images?.forEach { img ->
@@ -275,7 +273,6 @@ fun UserJobInputScreen(
         }
     }
 
-    // Advanced Options
     var showAdvanced by remember { mutableStateOf(false) }
     var advancedCategory by remember { mutableStateOf(editingJob?.jobCategory.orEmpty()) }
     var advancedIndustry by remember { mutableStateOf(editingJob?.industry.orEmpty()) }
@@ -289,9 +286,7 @@ fun UserJobInputScreen(
     var salaryMax by remember { mutableStateOf(editingJob?.salaryMax?.toInt()?.toString().orEmpty()) }
     var salaryCurrency by remember { mutableStateOf(editingJob?.salaryCurrency ?: "TZS") }
 
-    // ---------------------------------------------------------
     // CREATE COMPANY FORM STATE
-    // ---------------------------------------------------------
     var newCompName by remember { mutableStateOf("") }
     var newCompIndustry by remember { mutableStateOf("") }
     var newCompUrl by remember { mutableStateOf("") }
@@ -307,7 +302,6 @@ fun UserJobInputScreen(
     var newCompEmployees by remember { mutableStateOf("") }
     var creatingCompany by remember { mutableStateOf(false) }
 
-    // Media Picker for Job Attachments
     val filePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetMultipleContents()
     ) { uris: List<Uri> ->
@@ -325,7 +319,6 @@ fun UserJobInputScreen(
         }
     }
 
-    // Logo Picker for Company
     val logoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
@@ -336,9 +329,6 @@ fun UserJobInputScreen(
 
     var submittingJob by remember { mutableStateOf(false) }
 
-    // ---------------------------------------------------------
-    // ACTIONS
-    // ---------------------------------------------------------
     fun handleChooseCompany(companyName: String) {
         if (companyName.isBlank()) {
             showMessage("Please select a company", isError = true)
@@ -483,7 +473,6 @@ fun UserJobInputScreen(
             .background(DarkBackground)
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
-            // TOP APP BAR
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -548,7 +537,6 @@ fun UserJobInputScreen(
                 }
             }
 
-            // NOTIFICATION BANNER
             AnimatedVisibility(
                 visible = messageText != null,
                 enter = fadeIn(),
@@ -581,7 +569,6 @@ fun UserJobInputScreen(
                 }
             }
 
-            // CONTENT BODY
             when (step) {
                 JobInputStep.CHOOSE_COMPANY -> {
                     ChooseCompanyStep(
@@ -739,43 +726,27 @@ private fun ChooseCompanyStep(
     ) {
         item {
             Column(modifier = Modifier.padding(bottom = 8.dp)) {
+                Text("Choose Your Company", color = TextWhite, fontSize = 24.sp, fontWeight = FontWeight.Black)
                 Text(
-                    text = "Choose Your Company",
-                    color = TextWhite,
-                    fontSize = 24.sp,
-                    fontWeight = FontWeight.Black
-                )
-                Text(
-                    text = "Select the company you're hiring for, or create a new one.",
-                    color = TextGray400,
-                    fontSize = 13.sp,
-                    modifier = Modifier.padding(top = 4.dp)
+                    "Select the company you're hiring for, or create a new one.",
+                    color = TextGray400, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp)
                 )
             }
         }
 
-        // Saved company from profile (if exists)
         if (profileWork.isNotBlank()) {
             item {
                 Column {
                     Text(
-                        text = "YOUR COMPANY (FROM PROFILE)",
-                        color = TextGray500,
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 1.sp,
+                        "YOUR COMPANY (FROM PROFILE)",
+                        color = TextGray500, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp,
                         modifier = Modifier.padding(bottom = 8.dp)
                     )
-
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(16.dp))
-                            .background(
-                                Brush.horizontalGradient(
-                                    listOf(PrimaryBlue.copy(alpha = 0.15f), BrandPurple.copy(alpha = 0.15f))
-                                )
-                            )
+                            .background(Brush.horizontalGradient(listOf(PrimaryBlue.copy(alpha = 0.15f), BrandPurple.copy(alpha = 0.15f))))
                             .border(1.dp, PrimaryBlue.copy(alpha = 0.35f), RoundedCornerShape(16.dp))
                             .clickable { onSelectCompany(profileWork) }
                             .padding(16.dp),
@@ -788,48 +759,26 @@ private fun ChooseCompanyStep(
                                 .background(Brush.linearGradient(listOf(PrimaryBlue, BrandPurple))),
                             contentAlignment = Alignment.Center
                         ) {
-                            Icon(Icons.Default.Business, contentDescription = null, tint = Color.White, modifier = Modifier.size(22.dp))
+                            Icon(Icons.Default.Business, null, tint = Color.White, modifier = Modifier.size(22.dp))
                         }
-
                         Spacer(modifier = Modifier.width(14.dp))
-
                         Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = profileWork,
-                                color = TextWhite,
-                                fontSize = 15.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Text(
-                                text = "Works at $profileWork",
-                                color = TextGray400,
-                                fontSize = 11.sp
-                            )
+                            Text(profileWork, color = TextWhite, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                            Text("Works at $profileWork", color = TextGray400, fontSize = 11.sp)
                         }
-
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                            contentDescription = null,
-                            tint = AccentCyan,
-                            modifier = Modifier.size(18.dp)
-                        )
+                        Icon(Icons.AutoMirrored.Filled.ArrowForward, null, tint = AccentCyan, modifier = Modifier.size(18.dp))
                     }
                 }
             }
         }
 
-        // Searchable combobox
         item {
             Column {
                 Text(
-                    text = if (profileWork.isNotBlank()) "OR CHOOSE ANOTHER COMPANY" else "CHOOSE A COMPANY",
-                    color = TextGray500,
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 1.sp,
+                    if (profileWork.isNotBlank()) "OR CHOOSE ANOTHER COMPANY" else "CHOOSE A COMPANY",
+                    color = TextGray500, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp,
                     modifier = Modifier.padding(bottom = 8.dp)
                 )
-
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -838,18 +787,12 @@ private fun ChooseCompanyStep(
                         .border(1.dp, BorderWhite10, RoundedCornerShape(16.dp))
                         .padding(horizontal = 14.dp, vertical = 6.dp)
                 ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(imageVector = Icons.Default.Search, contentDescription = null, tint = TextGray500, modifier = Modifier.size(18.dp))
+                    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Search, null, tint = TextGray500, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(8.dp))
                         OutlinedTextField(
                             value = searchQuery,
-                            onValueChange = {
-                                searchQuery = it
-                                dropdownOpen = true
-                            },
+                            onValueChange = { searchQuery = it; dropdownOpen = true },
                             placeholder = { Text("Search companies...", color = TextGray600, fontSize = 13.sp) },
                             colors = OutlinedTextFieldDefaults.colors(
                                 focusedBorderColor = Color.Transparent,
@@ -861,12 +804,11 @@ private fun ChooseCompanyStep(
                             singleLine = true
                         )
                         IconButton(onClick = { dropdownOpen = !dropdownOpen }) {
-                            Icon(Icons.Default.KeyboardArrowDown, contentDescription = null, tint = TextGray400)
+                            Icon(Icons.Default.KeyboardArrowDown, null, tint = TextGray400)
                         }
                     }
                 }
 
-                // Dropdown of matches
                 if (dropdownOpen || searchQuery.isNotBlank()) {
                     Column(
                         modifier = Modifier
@@ -881,12 +823,7 @@ private fun ChooseCompanyStep(
                                 CircularProgressIndicator(color = AccentCyan, modifier = Modifier.size(20.dp))
                             }
                         } else if (filteredCompanies.isEmpty()) {
-                            Text(
-                                text = "No company found",
-                                color = TextGray500,
-                                fontSize = 12.sp,
-                                modifier = Modifier.padding(16.dp)
-                            )
+                            Text("No company found", color = TextGray500, fontSize = 12.sp, modifier = Modifier.padding(16.dp))
                         } else {
                             filteredCompanies.take(15).forEach { comp ->
                                 Row(
@@ -900,7 +837,7 @@ private fun ChooseCompanyStep(
                                         .padding(horizontal = 16.dp, vertical = 12.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Icon(imageVector = Icons.Default.Apartment, contentDescription = null, tint = TextGray400, modifier = Modifier.size(16.dp))
+                                    Icon(Icons.Default.Apartment, null, tint = TextGray400, modifier = Modifier.size(16.dp))
                                     Spacer(modifier = Modifier.width(10.dp))
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text(comp.name, color = TextWhite, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
@@ -916,18 +853,13 @@ private fun ChooseCompanyStep(
             }
         }
 
-        // Create Company Prompt
         item {
             Column(modifier = Modifier.padding(top = 8.dp)) {
                 Text(
-                    text = "COMPANY NOT LISTED?",
-                    color = TextGray500,
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 1.sp,
+                    "COMPANY NOT LISTED?",
+                    color = TextGray500, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp,
                     modifier = Modifier.padding(bottom = 8.dp)
                 )
-
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -946,17 +878,14 @@ private fun ChooseCompanyStep(
                             .border(1.dp, BorderWhite10, RoundedCornerShape(12.dp)),
                         contentAlignment = Alignment.Center
                     ) {
-                        Icon(imageVector = Icons.Default.Add, contentDescription = null, tint = AccentCyan, modifier = Modifier.size(20.dp))
+                        Icon(Icons.Default.Add, null, tint = AccentCyan, modifier = Modifier.size(20.dp))
                     }
-
                     Spacer(modifier = Modifier.width(14.dp))
-
                     Column(modifier = Modifier.weight(1f)) {
                         Text("Create New Company", color = TextWhite, fontSize = 14.sp, fontWeight = FontWeight.Bold)
                         Text("Add your company to the JobsReport catalog", color = TextGray500, fontSize = 11.sp, modifier = Modifier.padding(top = 2.dp))
                     }
-
-                    Icon(imageVector = Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null, tint = TextGray500, modifier = Modifier.size(16.dp))
+                    Icon(Icons.AutoMirrored.Filled.ArrowForward, null, tint = TextGray500, modifier = Modifier.size(16.dp))
                 }
             }
         }
@@ -998,7 +927,6 @@ private fun CreateCompanyStep(
             }
         }
 
-        // Basic Information
         item {
             FormSectionHeader(title = "BASIC INFORMATION", icon = Icons.Default.Business)
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -1017,7 +945,6 @@ private fun CreateCompanyStep(
             }
         }
 
-        // Company Logo
         item {
             FormSectionHeader(title = "COMPANY LOGO", icon = Icons.Default.Image)
             if (logoUrl.isNotBlank()) {
@@ -1031,23 +958,16 @@ private fun CreateCompanyStep(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     AsyncImage(
-                        model = logoUrl,
-                        contentDescription = "Logo",
-                        modifier = Modifier
-                            .size(56.dp)
-                            .clip(RoundedCornerShape(12.dp)),
+                        model = logoUrl, contentDescription = "Logo",
+                        modifier = Modifier.size(56.dp).clip(RoundedCornerShape(12.dp)),
                         contentScale = ContentScale.Crop
                     )
                     Spacer(modifier = Modifier.width(14.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text("Logo Uploaded", color = TextWhite, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                         Text(
-                            text = "Remove logo",
-                            color = RedColor,
-                            fontSize = 11.sp,
-                            modifier = Modifier
-                                .clickable(onClick = onRemoveLogo)
-                                .padding(top = 4.dp)
+                            "Remove logo", color = RedColor, fontSize = 11.sp,
+                            modifier = Modifier.clickable(onClick = onRemoveLogo).padding(top = 4.dp)
                         )
                     }
                 }
@@ -1063,14 +983,13 @@ private fun CreateCompanyStep(
                     horizontalArrangement = Arrangement.Center,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(imageVector = Icons.Default.Upload, contentDescription = null, tint = AccentCyan, modifier = Modifier.size(20.dp))
+                    Icon(Icons.Default.Upload, null, tint = AccentCyan, modifier = Modifier.size(20.dp))
                     Spacer(modifier = Modifier.width(8.dp))
                     Text("Upload Company Logo (optional)", color = AccentCyan, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                 }
             }
         }
 
-        // Address
         item {
             FormSectionHeader(title = "ADDRESS", icon = Icons.Default.LocationOn)
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -1095,31 +1014,22 @@ private fun CreateCompanyStep(
             }
         }
 
-        // Buttons
         item {
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 12.dp),
+                modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Box(
                     modifier = Modifier
-                        .weight(1f)
-                        .height(48.dp)
-                        .clip(RoundedCornerShape(14.dp))
-                        .background(SurfaceWhite04)
-                        .clickable(onClick = onCancel),
+                        .weight(1f).height(48.dp).clip(RoundedCornerShape(14.dp))
+                        .background(SurfaceWhite04).clickable(onClick = onCancel),
                     contentAlignment = Alignment.Center
                 ) {
                     Text("Cancel", color = TextWhite, fontWeight = FontWeight.Bold, fontSize = 13.sp)
                 }
-
                 Box(
                     modifier = Modifier
-                        .weight(2f)
-                        .height(48.dp)
-                        .clip(RoundedCornerShape(14.dp))
+                        .weight(2f).height(48.dp).clip(RoundedCornerShape(14.dp))
                         .background(Brush.horizontalGradient(listOf(PrimaryBlue, BrandPurple)))
                         .clickable(enabled = !creating, onClick = onSubmit),
                     contentAlignment = Alignment.Center
@@ -1128,7 +1038,7 @@ private fun CreateCompanyStep(
                         CircularProgressIndicator(color = Color.White, modifier = Modifier.size(20.dp))
                     } else {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(imageVector = Icons.Default.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
+                            Icon(Icons.Default.Check, null, tint = Color.White, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(6.dp))
                             Text("Create & Continue", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
                         }
@@ -1205,20 +1115,15 @@ private fun JobFormStep(
                 }
                 Text(
                     text = if (isEditing) "Edit Job" else "Post a Job",
-                    color = TextWhite,
-                    fontSize = 24.sp,
-                    fontWeight = FontWeight.Black
+                    color = TextWhite, fontSize = 24.sp, fontWeight = FontWeight.Black
                 )
                 Text(
                     text = if (isEditing) "Update your job listing details." else "Hiring on behalf of $selectedCompany",
-                    color = TextGray400,
-                    fontSize = 13.sp,
-                    modifier = Modifier.padding(top = 2.dp)
+                    color = TextGray400, fontSize = 13.sp, modifier = Modifier.padding(top = 2.dp)
                 )
             }
         }
 
-        // Section: Company
         item {
             FormSectionHeader(title = "COMPANY YOU'RE HIRING FOR", icon = Icons.Default.Business)
             Row(
@@ -1232,34 +1137,28 @@ private fun JobFormStep(
             ) {
                 Box(
                     modifier = Modifier
-                        .size(40.dp)
-                        .clip(RoundedCornerShape(10.dp))
+                        .size(40.dp).clip(RoundedCornerShape(10.dp))
                         .background(Brush.linearGradient(listOf(PrimaryBlue, BrandPurple))),
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(Icons.Default.Apartment, contentDescription = null, tint = Color.White, modifier = Modifier.size(20.dp))
+                    Icon(Icons.Default.Apartment, null, tint = Color.White, modifier = Modifier.size(20.dp))
                 }
                 Spacer(modifier = Modifier.width(12.dp))
                 Text(selectedCompany, color = TextWhite, fontSize = 14.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                 if (!isEditing) {
                     Text(
-                        text = "Change",
-                        color = AccentCyan,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
+                        "Change", color = AccentCyan, fontSize = 11.sp, fontWeight = FontWeight.Bold,
                         modifier = Modifier.clickable(onClick = onChangeCompany)
                     )
                 }
             }
         }
 
-        // Section: Job Basics
         item {
             FormSectionHeader(title = "JOB BASICS", icon = Icons.Default.Work)
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 FormTextInput(label = "Job Title *", value = title, onValueChange = onTitleChange, placeholder = "e.g. Senior Frontend Engineer")
 
-                // Category dropdown
                 Column {
                     Text("Category / Role *", color = TextGray400, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp, modifier = Modifier.padding(bottom = 6.dp))
                     Box(
@@ -1277,7 +1176,7 @@ private fun JobFormStep(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(selectedRole.ifBlank { "Select Category..." }, color = TextWhite, fontSize = 13.sp)
-                            Icon(Icons.Default.KeyboardArrowDown, contentDescription = null, tint = TextGray400, modifier = Modifier.size(18.dp))
+                            Icon(Icons.Default.KeyboardArrowDown, null, tint = TextGray400, modifier = Modifier.size(18.dp))
                         }
 
                         DropdownMenu(
@@ -1307,7 +1206,6 @@ private fun JobFormStep(
                     }
                 }
 
-                // Expires At Date Picker
                 Column {
                     Text("Expires On *", color = TextGray400, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp, modifier = Modifier.padding(bottom = 6.dp))
                     Row(
@@ -1320,7 +1218,7 @@ private fun JobFormStep(
                             .padding(horizontal = 14.dp, vertical = 13.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(imageVector = Icons.Default.CalendarToday, contentDescription = null, tint = AccentCyan, modifier = Modifier.size(16.dp))
+                        Icon(Icons.Default.CalendarToday, null, tint = AccentCyan, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(10.dp))
                         Text(expiresAt, color = TextWhite, fontSize = 13.sp, fontWeight = FontWeight.Medium)
                     }
@@ -1328,7 +1226,6 @@ private fun JobFormStep(
             }
         }
 
-        // Section: Locations
         item {
             FormSectionHeader(title = "LOCATIONS", icon = Icons.Default.LocationOn)
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -1352,7 +1249,6 @@ private fun JobFormStep(
             }
         }
 
-        // Section: How to Apply
         item {
             FormSectionHeader(title = "HOW TO APPLY", icon = Icons.Default.OpenInNew)
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -1386,37 +1282,14 @@ private fun JobFormStep(
                 }
 
                 when (applicationType) {
-                    "url" -> FormTextInput(
-                        label = "Application URL",
-                        value = applicationValue,
-                        onValueChange = onApplicationValueChange,
-                        placeholder = "https://company.com/careers/apply"
-                    )
-                    "email" -> FormTextInput(
-                        label = "Application Email",
-                        value = applicationValue,
-                        onValueChange = onApplicationValueChange,
-                        placeholder = "careers@company.com"
-                    )
-                    "whatsapp" -> FormTextInput(
-                        label = "WhatsApp Number",
-                        value = applicationValue,
-                        onValueChange = onApplicationValueChange,
-                        placeholder = "+255 712 345 678"
-                    )
-                    "instructions" -> FormTextInput(
-                        label = "Application Instructions",
-                        value = applicationValue,
-                        onValueChange = onApplicationValueChange,
-                        placeholder = "e.g. Submit your CV and portfolio to...",
-                        maxLines = 4,
-                        singleLine = false
-                    )
+                    "url" -> FormTextInput(label = "Application URL", value = applicationValue, onValueChange = onApplicationValueChange, placeholder = "https://company.com/careers/apply")
+                    "email" -> FormTextInput(label = "Application Email", value = applicationValue, onValueChange = onApplicationValueChange, placeholder = "careers@company.com")
+                    "whatsapp" -> FormTextInput(label = "WhatsApp Number", value = applicationValue, onValueChange = onApplicationValueChange, placeholder = "+255 712 345 678")
+                    "instructions" -> FormTextInput(label = "Application Instructions", value = applicationValue, onValueChange = onApplicationValueChange, placeholder = "e.g. Submit your CV and portfolio to...", maxLines = 4, singleLine = false)
                 }
             }
         }
 
-        // Section: Attachments
         item {
             FormSectionHeader(title = "ATTACHMENTS", icon = Icons.Default.AttachFile)
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1431,13 +1304,11 @@ private fun JobFormStep(
                     horizontalArrangement = Arrangement.Center,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(imageVector = Icons.Default.Upload, contentDescription = null, tint = AccentCyan, modifier = Modifier.size(18.dp))
+                    Icon(Icons.Default.Upload, null, tint = AccentCyan, modifier = Modifier.size(18.dp))
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
                         text = if (attachments.isEmpty()) "Upload files / images (optional)" else "${attachments.size} file(s) attached — Add more",
-                        color = AccentCyan,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold
+                        color = AccentCyan, fontSize = 12.sp, fontWeight = FontWeight.SemiBold
                     )
                 }
 
@@ -1456,10 +1327,8 @@ private fun JobFormStep(
                             ) {
                                 if (att.type == "image") {
                                     AsyncImage(
-                                        model = att.thumbnail,
-                                        contentDescription = att.name,
-                                        contentScale = ContentScale.Crop,
-                                        modifier = Modifier.fillMaxSize()
+                                        model = att.thumbnail, contentDescription = att.name,
+                                        contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize()
                                     )
                                 } else {
                                     Column(
@@ -1467,7 +1336,7 @@ private fun JobFormStep(
                                         horizontalAlignment = Alignment.CenterHorizontally,
                                         verticalArrangement = Arrangement.Center
                                     ) {
-                                        Icon(imageVector = Icons.Default.Description, contentDescription = null, tint = AccentCyan, modifier = Modifier.size(24.dp))
+                                        Icon(Icons.Default.Description, null, tint = AccentCyan, modifier = Modifier.size(24.dp))
                                         Text(att.name.take(8), color = TextGray400, fontSize = 8.sp, maxLines = 1)
                                     }
                                 }
@@ -1479,7 +1348,7 @@ private fun JobFormStep(
                                         .align(Alignment.TopEnd)
                                         .background(Color.Black.copy(alpha = 0.6f), CircleShape)
                                 ) {
-                                    Icon(Icons.Default.Delete, contentDescription = "Delete", tint = RedColor, modifier = Modifier.size(12.dp))
+                                    Icon(Icons.Default.Delete, null, tint = RedColor, modifier = Modifier.size(12.dp))
                                 }
                             }
                         }
@@ -1488,109 +1357,17 @@ private fun JobFormStep(
             }
         }
 
-        // Section: Job Description
+        // ── JOB DESCRIPTION — WYSIWYG / HTML editor ──
         item {
             FormSectionHeader(title = "JOB DESCRIPTION", icon = Icons.Default.Description)
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("${description.length} characters", color = TextGray500, fontSize = 10.sp, fontFamily = FontFamily.Monospace)
-
-                    Row(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(SurfaceWhite04)
-                            .padding(2.dp)
-                    ) {
-                        Text(
-                            text = "VISUAL",
-                            color = if (descEditMode == "visual") Color.White else TextGray400,
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(6.dp))
-                                .background(if (descEditMode == "visual") PrimaryBlue else Color.Transparent)
-                                .clickable { onToggleDescMode() }
-                                .padding(horizontal = 8.dp, vertical = 4.dp)
-                        )
-                        Text(
-                            text = "HTML",
-                            color = if (descEditMode == "html") Color.White else TextGray400,
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(6.dp))
-                                .background(if (descEditMode == "html") PrimaryBlue else Color.Transparent)
-                                .clickable { onToggleDescMode() }
-                                .padding(horizontal = 8.dp, vertical = 4.dp)
-                        )
-                    }
-                }
-
-                // Formatting Quick Toolbar
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(SurfaceWhite04)
-                        .border(1.dp, BorderWhite10, RoundedCornerShape(10.dp))
-                        .padding(horizontal = 6.dp, vertical = 4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    IconButton(
-                        onClick = { onDescriptionChange("$description<b>Bold text</b>") },
-                        modifier = Modifier.size(28.dp)
-                    ) {
-                        Icon(Icons.Default.FormatBold, contentDescription = "Bold", tint = TextWhite, modifier = Modifier.size(16.dp))
-                    }
-                    IconButton(
-                        onClick = { onDescriptionChange("$description<i>Italic text</i>") },
-                        modifier = Modifier.size(28.dp)
-                    ) {
-                        Icon(Icons.Default.FormatItalic, contentDescription = "Italic", tint = TextWhite, modifier = Modifier.size(16.dp))
-                    }
-                    IconButton(
-                        onClick = { onDescriptionChange("$description<u>Underlined</u>") },
-                        modifier = Modifier.size(28.dp)
-                    ) {
-                        Icon(Icons.Default.FormatUnderlined, contentDescription = "Underline", tint = TextWhite, modifier = Modifier.size(16.dp))
-                    }
-                    IconButton(
-                        onClick = { onDescriptionChange("$description\n<h3>Heading</h3>") },
-                        modifier = Modifier.size(28.dp)
-                    ) {
-                        Text("H3", color = TextWhite, fontSize = 11.sp, fontWeight = FontWeight.Black)
-                    }
-                    IconButton(
-                        onClick = { onDescriptionChange("$description\n<ul><li>Point 1</li><li>Point 2</li></ul>") },
-                        modifier = Modifier.size(28.dp)
-                    ) {
-                        Icon(Icons.Default.FormatListBulleted, contentDescription = "Bullet List", tint = TextWhite, modifier = Modifier.size(16.dp))
-                    }
-                    IconButton(
-                        onClick = { onDescriptionChange("$description\n<ol><li>Step 1</li><li>Step 2</li></ol>") },
-                        modifier = Modifier.size(28.dp)
-                    ) {
-                        Icon(Icons.Default.FormatListNumbered, contentDescription = "Number List", tint = TextWhite, modifier = Modifier.size(16.dp))
-                    }
-                }
-
-                FormTextInput(
-                    label = "",
-                    value = description,
-                    onValueChange = onDescriptionChange,
-                    placeholder = "Describe the role, responsibilities, requirements...",
-                    maxLines = 14,
-                    singleLine = false
-                )
-            }
+            RichDescriptionEditor(
+                value = description,
+                onValueChange = onDescriptionChange,
+                mode = descEditMode,
+                onToggleMode = onToggleDescMode
+            )
         }
 
-        // Section: Advanced Options (Collapsible)
         item {
             Column {
                 Row(
@@ -1603,18 +1380,16 @@ private fun JobFormStep(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(imageVector = Icons.Default.AutoAwesome, contentDescription = null, tint = BrandPurple, modifier = Modifier.size(16.dp))
+                        Icon(Icons.Default.AutoAwesome, null, tint = BrandPurple, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(8.dp))
                         Text("ADVANCED OPTIONS", color = TextGray400, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
                     }
-                    Icon(imageVector = Icons.Default.KeyboardArrowDown, contentDescription = null, tint = TextGray400, modifier = Modifier.size(18.dp))
+                    Icon(Icons.Default.KeyboardArrowDown, null, tint = TextGray400, modifier = Modifier.size(18.dp))
                 }
 
                 if (showAdvanced) {
                     Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 8.dp),
+                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1628,7 +1403,6 @@ private fun JobFormStep(
                                 FormTextInput(label = "Workplace", value = workplaceType, onValueChange = onWorkplaceTypeChange, placeholder = "Onsite")
                             }
                         }
-
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Box(modifier = Modifier.weight(1f)) {
                                 FormTextInput(label = "Education", value = educationLevel, onValueChange = onEducationLevelChange, placeholder = "Degree / Diploma")
@@ -1640,10 +1414,8 @@ private fun JobFormStep(
                                 FormTextInput(label = "Industry", value = advancedIndustry, onValueChange = onAdvancedIndustryChange, placeholder = "Telecom")
                             }
                         }
-
                         FormTextInput(label = "Skills (comma-separated)", value = skillsText, onValueChange = onSkillsTextChange, placeholder = "React, Kotlin, Jetpack Compose")
                         FormTextInput(label = "Benefits (comma-separated)", value = benefitsText, onValueChange = onBenefitsTextChange, placeholder = "Health Insurance, Annual Bonus")
-
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Box(modifier = Modifier.weight(1f)) {
                                 FormTextInput(label = "Min Salary", value = salaryMin, onValueChange = onSalaryMinChange, placeholder = "1000000")
@@ -1660,31 +1432,22 @@ private fun JobFormStep(
             }
         }
 
-        // Section: Bottom Actions
         item {
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 16.dp),
+                modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Box(
                     modifier = Modifier
-                        .weight(1f)
-                        .height(50.dp)
-                        .clip(RoundedCornerShape(14.dp))
-                        .background(SurfaceWhite04)
-                        .clickable(onClick = onCancel),
+                        .weight(1f).height(50.dp).clip(RoundedCornerShape(14.dp))
+                        .background(SurfaceWhite04).clickable(onClick = onCancel),
                     contentAlignment = Alignment.Center
                 ) {
                     Text("Cancel", color = TextWhite, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                 }
-
                 Box(
                     modifier = Modifier
-                        .weight(2f)
-                        .height(50.dp)
-                        .clip(RoundedCornerShape(14.dp))
+                        .weight(2f).height(50.dp).clip(RoundedCornerShape(14.dp))
                         .background(Brush.horizontalGradient(listOf(PrimaryBlue, BrandPurple)))
                         .clickable(enabled = !submitting, onClick = onSubmit),
                     contentAlignment = Alignment.Center
@@ -1693,7 +1456,7 @@ private fun JobFormStep(
                         CircularProgressIndicator(color = Color.White, modifier = Modifier.size(20.dp))
                     } else {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(imageVector = Icons.Default.CheckCircle, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
+                            Icon(Icons.Default.CheckCircle, null, tint = Color.White, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(if (isEditing) "Update Job" else "Publish Job", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                         }
@@ -1713,14 +1476,11 @@ private fun FormSectionHeader(title: String, icon: androidx.compose.ui.graphics.
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier.padding(top = 10.dp, bottom = 8.dp)
     ) {
-        Icon(imageVector = icon, contentDescription = null, tint = AccentCyan, modifier = Modifier.size(14.dp))
+        Icon(icon, null, tint = AccentCyan, modifier = Modifier.size(14.dp))
         Spacer(modifier = Modifier.width(8.dp))
         Text(
             text = title,
-            color = TextGray400,
-            fontSize = 10.sp,
-            fontWeight = FontWeight.Bold,
-            letterSpacing = 1.sp
+            color = TextGray400, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp
         )
     }
 }
@@ -1738,10 +1498,7 @@ private fun FormTextInput(
         if (label.isNotBlank()) {
             Text(
                 text = label,
-                color = TextGray400,
-                fontSize = 10.sp,
-                fontWeight = FontWeight.Bold,
-                letterSpacing = 1.sp,
+                color = TextGray400, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp,
                 modifier = Modifier.padding(bottom = 6.dp)
             )
         }
@@ -1764,4 +1521,317 @@ private fun FormTextInput(
             maxLines = maxLines
         )
     }
+}
+
+// -------------------------------------------------------------
+// RICH DESCRIPTION EDITOR — WebView-backed WYSIWYG + raw HTML
+// Mirrors UserJobInput.tsx `contentEditable` behavior.
+// -------------------------------------------------------------
+@Composable
+private fun RichDescriptionEditor(
+    value: String,
+    onValueChange: (String) -> Unit,
+    mode: String, // "visual" | "html"
+    onToggleMode: () -> Unit
+) {
+    var webViewRef by remember { mutableStateOf<WebView?>(null) }
+    var lastPushedValue by remember { mutableStateOf<String?>(null) }
+    var selfEdit by remember { mutableStateOf(false) }
+
+    LaunchedEffect(value, mode) {
+        if (mode != "visual") return@LaunchedEffect
+        val wv = webViewRef ?: return@LaunchedEffect
+        if (selfEdit) { selfEdit = false; return@LaunchedEffect }
+        if (lastPushedValue == value) return@LaunchedEffect
+        lastPushedValue = value
+        wv.evaluateJavascript("window.__setEditorHtml(${jsString(value)});", null)
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                "${value.length} characters",
+                color = TextGray500, fontSize = 10.sp, fontFamily = FontFamily.Monospace
+            )
+            Row(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(SurfaceWhite04)
+                    .padding(2.dp)
+            ) {
+                Text(
+                    text = "VISUAL",
+                    color = if (mode == "visual") Color.White else TextGray400,
+                    fontSize = 10.sp, fontWeight = FontWeight.Bold,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(if (mode == "visual") PrimaryBlue else Color.Transparent)
+                        .clickable(enabled = mode != "visual", onClick = onToggleMode)
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                )
+                Text(
+                    text = "HTML",
+                    color = if (mode == "html") Color.White else TextGray400,
+                    fontSize = 10.sp, fontWeight = FontWeight.Bold,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(if (mode == "html") PrimaryBlue else Color.Transparent)
+                        .clickable(enabled = mode != "html", onClick = onToggleMode)
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                )
+            }
+        }
+
+        if (mode == "visual") {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(SurfaceWhite04)
+                    .border(1.dp, BorderWhite10, RoundedCornerShape(10.dp))
+                    .padding(horizontal = 6.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                fun exec(cmd: String, arg: String = "null") {
+                    webViewRef?.evaluateJavascript(
+                        "document.execCommand('${cmd.replace("'", "\\'")}', false, $arg); true",
+                        null
+                    )
+                }
+                IconButton(onClick = { exec("bold") }, modifier = Modifier.size(28.dp)) {
+                    Icon(Icons.Default.FormatBold, null, tint = TextWhite, modifier = Modifier.size(16.dp))
+                }
+                IconButton(onClick = { exec("italic") }, modifier = Modifier.size(28.dp)) {
+                    Icon(Icons.Default.FormatItalic, null, tint = TextWhite, modifier = Modifier.size(16.dp))
+                }
+                IconButton(onClick = { exec("underline") }, modifier = Modifier.size(28.dp)) {
+                    Icon(Icons.Default.FormatUnderlined, null, tint = TextWhite, modifier = Modifier.size(16.dp))
+                }
+                Box(Modifier.width(1.dp).height(16.dp).background(BorderWhite10))
+                IconButton(onClick = { exec("formatBlock", "'h3'") }, modifier = Modifier.size(28.dp)) {
+                    Text("H3", color = TextWhite, fontSize = 11.sp, fontWeight = FontWeight.Black)
+                }
+                IconButton(onClick = { exec("formatBlock", "'p'") }, modifier = Modifier.size(28.dp)) {
+                    Text("P", color = TextWhite, fontSize = 11.sp, fontWeight = FontWeight.Black)
+                }
+                Box(Modifier.width(1.dp).height(16.dp).background(BorderWhite10))
+                IconButton(onClick = { exec("insertUnorderedList") }, modifier = Modifier.size(28.dp)) {
+                    Icon(Icons.Default.FormatListBulleted, null, tint = TextWhite, modifier = Modifier.size(16.dp))
+                }
+                IconButton(onClick = { exec("insertOrderedList") }, modifier = Modifier.size(28.dp)) {
+                    Icon(Icons.Default.FormatListNumbered, null, tint = TextWhite, modifier = Modifier.size(16.dp))
+                }
+            }
+
+            AndroidView(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 400.dp, max = 900.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .border(1.dp, BorderWhite10, RoundedCornerShape(14.dp)),
+                factory = { ctx ->
+                    WebView(ctx).apply {
+                        webViewRef = this
+                        setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                        settings.javaScriptEnabled = true
+                        settings.domStorageEnabled = true
+                        settings.loadsImagesAutomatically = true
+                        isVerticalScrollBarEnabled = true
+                        isHorizontalScrollBarEnabled = false
+                        overScrollMode = WebView.OVER_SCROLL_NEVER
+
+                        addJavascriptInterface(object {
+                            @JavascriptInterface
+                            fun onContentChanged(html: String) {
+                                selfEdit = true
+                                lastPushedValue = html
+                                onValueChange(html)
+                            }
+                        }, "AndroidBridge")
+
+                        webViewClient = object : WebViewClient() {
+                            override fun onPageFinished(view: WebView, url: String?) {
+                                view.evaluateJavascript("window.__setEditorHtml(${jsString(value)});", null)
+                            }
+                        }
+
+                        loadDataWithBaseURL(
+                            null,
+                            buildEditorHtml(value),
+                            "text/html",
+                            "UTF-8",
+                            null
+                        )
+                    }
+                }
+            )
+        } else {
+            BasicTextField(
+                value = value,
+                onValueChange = onValueChange,
+                textStyle = TextStyle(
+                    color = AccentCyan,
+                    fontSize = 13.sp,
+                    lineHeight = 20.sp,
+                    fontFamily = FontFamily.Monospace
+                ),
+                cursorBrush = SolidColor(PrimaryBlue),
+                keyboardOptions = KeyboardOptions(
+                    capitalization = KeyboardCapitalization.None,
+                    imeAction = ImeAction.Default
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 400.dp, max = 900.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(Color(0x08FFFFFF))
+                    .border(1.dp, BorderWhite10, RoundedCornerShape(14.dp))
+                    .padding(16.dp),
+                decorationBox = { inner ->
+                    if (value.isEmpty()) {
+                        Text(
+                            "<p>Edit HTML directly...</p>",
+                            color = TextGray600, fontSize = 13.sp, fontFamily = FontFamily.Monospace
+                        )
+                    }
+                    inner()
+                }
+            )
+        }
+
+        Text(
+            text = if (mode == "visual") "WYSIWYG mode — click buttons to format" else "HTML mode — direct markup editing",
+            color = TextGray500, fontSize = 10.sp, fontFamily = FontFamily.Monospace
+        )
+    }
+
+    DisposableEffect(mode) {
+        onDispose {
+            if (mode != "visual") {
+                webViewRef?.destroy()
+                webViewRef = null
+            }
+        }
+    }
+}
+
+// -------------------------------------------------------------
+// JS string escaping for evaluateJavascript
+// -------------------------------------------------------------
+private fun jsString(s: String): String {
+    val escaped = s
+        .replace("\\", "\\\\")
+        .replace("\"", "\\\"")
+        .replace("\n", "\\n")
+        .replace("\r", "\\r")
+        .replace("\u2028", "\\u2028")
+        .replace("\u2029", "\\u2029")
+    return "\"$escaped\""
+}
+
+// -------------------------------------------------------------
+// HTML shell for the WebView editor (mirrors UserJobInput.tsx)
+// -------------------------------------------------------------
+private fun buildEditorHtml(initial: String): String {
+    val safeInitial = initial.replace("</script>", "<\\/script>")
+    return """
+<!DOCTYPE html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: transparent;
+    color: #D1D5DB;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  #editor {
+    min-height: 380px;
+    padding: 20px;
+    font-size: 15px;
+    line-height: 1.8;
+    color: #D1D5DB;
+    outline: none;
+    box-sizing: border-box;
+    word-wrap: break-word;
+  }
+  #editor:empty:before {
+    content: attr(data-placeholder);
+    color: #4B5563;
+    pointer-events: none;
+  }
+  #editor h1, #editor h2, #editor h3 {
+    color: #FFFFFF;
+    font-weight: 800;
+    margin: 16px 0 8px;
+    line-height: 1.3;
+  }
+  #editor h3 { font-size: 17px; }
+  #editor p { margin: 8px 0; }
+  #editor ul, #editor ol {
+    padding-left: 22px;
+    margin: 8px 0;
+  }
+  #editor li { margin: 4px 0; }
+  #editor b, #editor strong { color: #FFFFFF; font-weight: 700; }
+  #editor i, #editor em { font-style: italic; }
+  #editor u { text-decoration: underline; }
+  #editor a { color: #4A9EFF; }
+  #editor img { max-width: 100%; border-radius: 8px; }
+  #editor blockquote {
+    border-left: 3px solid #1877F2;
+    padding-left: 12px;
+    color: #9CA3AF;
+    margin: 8px 0;
+  }
+</style>
+</head>
+<body>
+  <div
+    id="editor"
+    contenteditable="true"
+    data-placeholder="Describe the role, responsibilities, requirements..."
+    spellcheck="false"
+  >$safeInitial</div>
+  <script>
+    (function() {
+      var editor = document.getElementById('editor');
+      var lastHtml = editor.innerHTML;
+
+      function notify() {
+        var html = editor.innerHTML;
+        if (html === '<br>' || html === '<div><br></div>') html = '';
+        if (html !== lastHtml) {
+          lastHtml = html;
+          if (window.AndroidBridge && window.AndroidBridge.onContentChanged) {
+            window.AndroidBridge.onContentChanged(html);
+          }
+        }
+      }
+
+      editor.addEventListener('input', notify);
+      editor.addEventListener('blur', notify);
+
+      window.__setEditorHtml = function(html) {
+        if (html === lastHtml) return;
+        lastHtml = html;
+        editor.innerHTML = html;
+      };
+
+      editor.addEventListener('click', function(e) {
+        var a = e.target.closest('a');
+        if (a) e.preventDefault();
+      });
+    })();
+  </script>
+</body>
+</html>
+    """.trimIndent()
 }
