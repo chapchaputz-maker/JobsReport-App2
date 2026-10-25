@@ -160,7 +160,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     var userToken by mutableStateOf<String?>(null)
         private set
     var currentUser by mutableStateOf<StoryUser?>(null)
-        private set
     var viewingProfileUser by mutableStateOf<StoryUser?>(null)
     val followedUserIds = mutableStateListOf<String>()
 
