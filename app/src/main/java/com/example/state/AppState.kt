@@ -74,6 +74,25 @@ enum class NavRoute(val title: String, val routePath: String) {
     NOTIFICATIONS("Notifications", "/notifications")
 }
 
+// ═══ FIX B — shared sanitizer for text fields coming from JSON or prefs.
+// Treats null, blank, and the literal string "null" as "no value".
+internal fun String?.cleanDbText(): String? {
+    if (this == null) return null
+    val t = this.trim()
+    if (t.isEmpty()) return null
+    if (t.equals("null", ignoreCase = true)) return null
+    return t
+}
+
+// ═══ FIX B — safe read from a JSONObject that could contain JSON null.
+// org.json's optString() returns the string "null" when the value is JSON null,
+// which is the source of the "null" bug on the profile screen.
+internal fun JSONObject.safeStr(key: String): String? {
+    if (!has(key) || isNull(key)) return null
+    val raw = optString(key, null) ?: return null
+    return raw.cleanDbText()
+}
+
 class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val api = JobsReportApi.create { cleanUserToken }
     private val prefs = application.getSharedPreferences("jobsreport_prefs", Context.MODE_PRIVATE)
@@ -165,7 +184,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             verifiedUsersMap[userId] = v
             return v
         }
-        // Fetch live from server just as UserProfile does
         ensureUserProfileLoaded(userId)
         return false
     }
@@ -418,7 +436,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
             } catch (_: Exception) {
-                // Keep initial report if network fetch fails
             } finally {
                 isReportDetailLoading = false
             }
@@ -442,7 +459,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         if (fetched != null && fetched.isNotEmpty()) {
                             categoryJobs = fetched
                         } else {
-                            // Fallback filtering from activeJobs
                             categoryJobs = activeJobs.filter { job ->
                                 job.jobCategory?.contains(categoryName, ignoreCase = true) == true ||
                                 job.role?.contains(categoryName, ignoreCase = true) == true ||
@@ -482,7 +498,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         if (companyJobsResult != null && companyJobsResult.isNotEmpty()) {
                             selectedCompanyJobs = companyJobsResult
                         } else {
-                            // Fallback: filter activeJobs matching company name
                             selectedCompanyJobs = activeJobs.filter {
                                 it.company.contains(company.name, ignoreCase = true) || company.name.contains(it.company, ignoreCase = true)
                             }
@@ -541,7 +556,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
             } catch (_: Exception) {
-                // Fall back gracefully to initialized sample data
             } finally {
                 isDataLoading = false
             }
@@ -584,7 +598,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     val unreadCount: Int
         get() = unreadNotificationsCount
 
-    // Backward-compatible mock notifications list
     val notifications = mutableStateListOf<NotificationItem>().apply {
         addAll(sampleNotifications)
     }
@@ -660,7 +673,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     hasMoreNotifications = hasMore
                 }
             } catch (e: Exception) {
-                // Ignore network errors gracefully
             } finally {
                 withContext(Dispatchers.Main) {
                     isNotificationsLoading = false
@@ -824,7 +836,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val expSec = claims.optLong("exp", 0L)
         if (expSec <= 0L) return false
         val nowSec = System.currentTimeMillis() / 1000L
-        return nowSec >= (expSec - 60L) // 60s buffer for clock skew
+        return nowSec >= (expSec - 60L)
     }
 
     val authHeader: String?
@@ -876,6 +888,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         return json.optString("email").takeIf { it.isNotBlank() }
     }
 
+    // ═══ FIX B — loadCurrentUser: sanitize all prefs reads so legacy "null" strings
+    // are dropped on next launch. No structural changes to the flow.
     private fun loadCurrentUser() {
         val rawToken = prefs.getString("jobsreport_token", null)
         val clean = sanitizeJwtToken(rawToken)
@@ -900,20 +914,20 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         val extractedEmail = extractEmailFromToken(clean)
-        var savedName = prefs.getString("user_name", null)
+        var savedName = prefs.getString("user_name", null).cleanDbText()
         if (savedName.isNullOrBlank() && !extractedEmail.isNullOrBlank()) {
             savedName = extractedEmail.substringBefore("@").replace(".", " ").replaceFirstChar { it.uppercase() }
         }
-        val savedUsername = prefs.getString("user_username", null) ?: extractedEmail?.substringBefore("@")
-        val savedAvatar = prefs.getString("user_avatar", null)
-        val savedEmail = prefs.getString("user_email", null) ?: extractedEmail
-        val savedHeadline = prefs.getString("user_headline", null)
-        val savedLocation = prefs.getString("user_location", null)
-        val savedBio = prefs.getString("user_bio", null)
-        val savedWebsite = prefs.getString("user_website", null)
-        val savedWork = prefs.getString("user_work", null)
-        val savedEducation = prefs.getString("user_education", null)
-        val savedCover = prefs.getString("user_cover", null)
+        val savedUsername = prefs.getString("user_username", null).cleanDbText() ?: extractedEmail?.substringBefore("@")
+        val savedAvatar = prefs.getString("user_avatar", null).cleanDbText()
+        val savedEmail = prefs.getString("user_email", null).cleanDbText() ?: extractedEmail
+        val savedHeadline = prefs.getString("user_headline", null).cleanDbText()
+        val savedLocation = prefs.getString("user_location", null).cleanDbText()
+        val savedBio = prefs.getString("user_bio", null).cleanDbText()
+        val savedWebsite = prefs.getString("user_website", null).cleanDbText()
+        val savedWork = prefs.getString("user_work", null).cleanDbText()
+        val savedEducation = prefs.getString("user_education", null).cleanDbText()
+        val savedCover = prefs.getString("user_cover", null).cleanDbText()
         val isVerifiedInt = prefs.getInt("user_is_verified", 0)
 
         val effectiveId = savedId?.takeIf { it.isNotBlank() }
@@ -944,7 +958,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 joinedDate = prefs.getString("user_joined_date", null),
                 skills = emptyList()
             )
-            // Proactively refresh own user profile from live API
             viewModelScope.launch {
                 try {
                     val meResp = api.getAuthUserMe("Bearer $clean")
@@ -952,21 +965,22 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     val meJson = JSONObject(meJsonStr)
                     val userObj = meJson.optJSONObject("user")
                     if (userObj != null) {
+                        // ═══ FIX B — use safeStr() so JSON null doesn't become "null"
                         val liveUser = StoryUser(
-                            id = userObj.optString("id", effectiveId),
-                            name = userObj.optString("name", effectiveName),
-                            username = userObj.optString("username", savedUsername),
-                            email = userObj.optString("email", savedEmail),
-                            profileImageUrl = userObj.optString("profile_image_url", savedAvatar),
-                            coverImageUrl = userObj.optString("cover_image_url", savedCover),
-                            headline = userObj.optString("headline", savedHeadline),
-                            bio = userObj.optString("bio", savedBio),
-                            work = userObj.optString("work", savedWork),
-                            education = userObj.optString("education", savedEducation),
-                            location = userObj.optString("location", savedLocation),
-                            website = userObj.optString("website", savedWebsite),
-                            country = userObj.optString("country", null),
-                            role = userObj.optString("role", null),
+                            id = userObj.safeStr("id") ?: effectiveId,
+                            name = userObj.safeStr("name") ?: effectiveName,
+                            username = userObj.safeStr("username") ?: savedUsername,
+                            email = userObj.safeStr("email") ?: savedEmail,
+                            profileImageUrl = userObj.safeStr("profile_image_url") ?: userObj.safeStr("avatar") ?: savedAvatar,
+                            coverImageUrl = userObj.safeStr("cover_image_url") ?: savedCover,
+                            headline = userObj.safeStr("headline") ?: savedHeadline,
+                            bio = userObj.safeStr("bio") ?: savedBio,
+                            work = userObj.safeStr("work") ?: savedWork,
+                            education = userObj.safeStr("education") ?: savedEducation,
+                            location = userObj.safeStr("location") ?: savedLocation,
+                            website = userObj.safeStr("website") ?: savedWebsite,
+                            country = userObj.safeStr("country"),
+                            role = userObj.safeStr("role"),
                             isVerified = userObj.opt("is_verified") ?: userObj.opt("isVerified"),
                             followersCount = userObj.optInt("followers_count", prefs.getInt("user_followers", 0)),
                             followingCount = userObj.optInt("following_count", prefs.getInt("user_following", 0)),
@@ -995,7 +1009,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 } catch (e: retrofit2.HttpException) {
                     if (e.code() == 401 || e.code() == 403) {
-                        // Stored token is invalid or expired
                         withContext(Dispatchers.Main) {
                             handleSessionExpired()
                             currentUser = null
@@ -1023,6 +1036,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    // ═══ FIX B + C — updateCurrentUser now distinguishes:
+    //   null  → keep current value
+    //   ""    → clear the field
+    //   value → set it
+    // Previously "blank or null = keep old", which made it impossible to clear fields.
     fun updateCurrentUser(
         name: String,
         username: String? = null,
@@ -1055,23 +1073,31 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             ?: current?.id
             ?: ("usr_" + java.util.UUID.randomUUID().toString().take(8))
 
-        val resolvedAvatar = avatarUrl?.ifBlank { null }
-            ?: current?.profileImageUrl
+        // Merge incoming text field with the current value:
+        //   null           → keep current
+        //   ""/"null"/sp   → clear (returns null)
+        //   "value"        → set value
+        fun merge(incoming: String?, existing: String?): String? {
+            if (incoming == null) return existing.cleanDbText()
+            return incoming.cleanDbText()
+        }
+
+        val resolvedAvatar = avatarUrl?.cleanDbText() ?: current?.profileImageUrl
             ?: getDefaultStoryAvatar(name, resolvedId)
-        val resolvedCover = coverUrl?.ifBlank { null } ?: current?.coverImageUrl
-        val resolvedHeadline = headline?.ifBlank { null } ?: current?.headline
-        val resolvedLocation = location?.ifBlank { null } ?: current?.location
-        val resolvedBio = bio?.ifBlank { null } ?: current?.bio
-        val resolvedWebsite = website?.ifBlank { null } ?: current?.website
-        val resolvedWork = work?.ifBlank { null } ?: current?.work
-        val resolvedEducation = education?.ifBlank { null } ?: current?.education
+        val resolvedCover = merge(coverUrl, current?.coverImageUrl)
+        val resolvedHeadline = merge(headline, current?.headline)
+        val resolvedLocation = merge(location, current?.location)
+        val resolvedBio = merge(bio, current?.bio)
+        val resolvedWebsite = merge(website, current?.website)
+        val resolvedWork = merge(work, current?.work)
+        val resolvedEducation = merge(education, current?.education)
         val resolvedVerified = isVerified ?: current?.isVerified
 
         val updated = StoryUser(
             id = resolvedId,
-            name = name.ifBlank { "User" },
-            username = username?.ifBlank { null } ?: current?.username,
-            email = email?.ifBlank { null } ?: current?.email,
+            name = name.cleanDbText() ?: "User",
+            username = username?.cleanDbText() ?: current?.username,
+            email = email?.cleanDbText() ?: current?.email,
             profileImageUrl = resolvedAvatar,
             coverImageUrl = resolvedCover,
             headline = resolvedHeadline,
@@ -1091,10 +1117,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         )
         currentUser = updated
         if (!token.isNullOrBlank()) {
-            val clean = sanitizeJwtToken(token)
-            userToken = clean
-            if (clean != null) {
-                prefs.edit().putString("jobsreport_token", clean).apply()
+            val cleanTok = sanitizeJwtToken(token)
+            userToken = cleanTok
+            if (cleanTok != null) {
+                prefs.edit().putString("jobsreport_token", cleanTok).apply()
             }
             loadNotifications(0)
         }
@@ -1121,6 +1147,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             .apply()
     }
 
+    // ═══ FIX B — fetchUserProfile: use safeStr() on every text field.
     suspend fun fetchUserProfile(userId: String): StoryUser? = withContext(Dispatchers.IO) {
         try {
             val res = runCatching { api.getUserProfile(userId) }.getOrNull()
@@ -1131,27 +1158,27 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     ?: if (json.has("id") || json.has("name") || json.has("is_verified") || json.has("username")) json else null
                 if (userObj != null) {
                     val fetchedUser = StoryUser(
-                        id = userObj.optString("id", userId),
-                        name = userObj.optString("name", "User"),
-                        username = userObj.optString("username", null),
-                        email = userObj.optString("email", null),
-                        profileImageUrl = userObj.optString("profile_image_url", userObj.optString("avatar", null)),
-                        coverImageUrl = userObj.optString("cover_image_url", null),
-                        headline = userObj.optString("headline", null),
-                        bio = userObj.optString("bio", null),
-                        work = userObj.optString("work", null),
-                        education = userObj.optString("education", null),
-                        location = userObj.optString("location", null),
-                        website = userObj.optString("website", null),
-                        country = userObj.optString("country", null),
-                        role = userObj.optString("role", null),
+                        id = userObj.safeStr("id") ?: userId,
+                        name = userObj.safeStr("name") ?: "User",
+                        username = userObj.safeStr("username"),
+                        email = userObj.safeStr("email"),
+                        profileImageUrl = userObj.safeStr("profile_image_url") ?: userObj.safeStr("avatar"),
+                        coverImageUrl = userObj.safeStr("cover_image_url"),
+                        headline = userObj.safeStr("headline"),
+                        bio = userObj.safeStr("bio"),
+                        work = userObj.safeStr("work"),
+                        education = userObj.safeStr("education"),
+                        location = userObj.safeStr("location"),
+                        website = userObj.safeStr("website"),
+                        country = userObj.safeStr("country"),
+                        role = userObj.safeStr("role"),
                         isVerified = userObj.opt("is_verified") ?: userObj.opt("isVerified"),
                         followersCount = userObj.optInt("followers_count", 0),
                         followingCount = userObj.optInt("following_count", 0),
                         jobsCount = userObj.optInt("jobs_count", 0),
                         storiesCount = userObj.optInt("stories_count", 0),
                         isFollowing = userObj.optBoolean("is_following", false),
-                        createdAt = userObj.optString("created_at", null)
+                        createdAt = userObj.safeStr("created_at")
                     )
                     withContext(Dispatchers.Main) {
                         userProfilesCache[userId] = fetchedUser
@@ -1236,6 +1263,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    // ═══ FIX B — saveProfileApi sends "" (empty string) for cleared text fields
+    // and only includes a field if the caller passed a non-null argument. That
+    // means the backend stores an empty string (or NULL) — never the literal "null".
     suspend fun saveProfileApi(
         name: String? = null,
         headline: String? = null,
@@ -1253,20 +1283,31 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             return@withContext false
         }
 
+        // "" means clear; null means keep current
+        fun cleanOutgoing(v: String?): String {
+            if (v == null) return ""
+            val t = v.trim()
+            return if (t.equals("null", ignoreCase = true)) "" else t
+        }
+
         try {
             val json = JSONObject()
-            val effectiveName = name?.trim()?.takeIf { it.isNotBlank() } ?: currentUser?.name?.trim()?.takeIf { it.isNotBlank() }
-            if (effectiveName != null) {
-                json.put("name", effectiveName)
+            val effectiveName = cleanOutgoing(name).ifBlank {
+                cleanOutgoing(currentUser?.name).ifBlank { "User" }
             }
-            if (headline != null) json.put("headline", if (headline.isBlank()) JSONObject.NULL else headline)
-            if (bio != null) json.put("bio", if (bio.isBlank()) JSONObject.NULL else bio)
-            if (work != null) json.put("work", if (work.isBlank()) JSONObject.NULL else work)
-            if (education != null) json.put("education", if (education.isBlank()) JSONObject.NULL else education)
-            if (location != null) json.put("location", if (location.isBlank()) JSONObject.NULL else location)
-            if (website != null) json.put("website", if (website.isBlank()) JSONObject.NULL else website)
-            if (avatarUrl != null) json.put("profile_image_url", avatarUrl)
-            if (coverUrl != null) json.put("cover_image_url", coverUrl)
+            json.put("name", effectiveName)
+
+            // Only include fields the caller explicitly targeted. Empty string
+            // tells the server "clear this field" — never send JSONObject.NULL
+            // because that ends up round-tripping as the literal string "null".
+            if (headline != null)  json.put("headline",  cleanOutgoing(headline))
+            if (bio != null)       json.put("bio",       cleanOutgoing(bio))
+            if (work != null)      json.put("work",      cleanOutgoing(work))
+            if (education != null) json.put("education", cleanOutgoing(education))
+            if (location != null)  json.put("location",  cleanOutgoing(location))
+            if (website != null)   json.put("website",   cleanOutgoing(website))
+            if (avatarUrl != null) json.put("profile_image_url", avatarUrl.trim())
+            if (coverUrl != null)  json.put("cover_image_url",   coverUrl.trim())
 
             val body = json.toString().toRequestBody("application/json".toMediaTypeOrNull())
             val responseBody = api.updateProfile(auth, body)
@@ -1274,21 +1315,23 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             val respJson = JSONObject(jsonStr)
             val userObj = respJson.optJSONObject("user")
 
-            val serverId = userObj?.optString("id") ?: currentUser?.id ?: extractUserIdFromToken(cleanUserToken)
+            val serverId = userObj?.safeStr("id") ?: currentUser?.id ?: extractUserIdFromToken(cleanUserToken)
 
             withContext(Dispatchers.Main) {
                 updateCurrentUser(
                     id = serverId,
-                    name = userObj?.optString("name", effectiveName ?: "User") ?: (effectiveName ?: "User"),
-                    username = userObj?.optString("username", currentUser?.username) ?: currentUser?.username,
-                    headline = userObj?.optString("headline", headline ?: "") ?: headline,
-                    location = userObj?.optString("location", location ?: "") ?: location,
-                    bio = userObj?.optString("bio", bio ?: "") ?: bio,
-                    website = userObj?.optString("website", website ?: "") ?: website,
-                    avatarUrl = userObj?.optString("profile_image_url", avatarUrl ?: "") ?: avatarUrl,
-                    coverUrl = userObj?.optString("cover_image_url", coverUrl ?: "") ?: coverUrl,
-                    work = userObj?.optString("work", work ?: "") ?: work,
-                    education = userObj?.optString("education", education ?: "") ?: education
+                    name = userObj?.safeStr("name") ?: effectiveName,
+                    username = userObj?.safeStr("username") ?: currentUser?.username,
+                    // Pass through exactly what we sent, falling back to the server echo.
+                    // This ensures the ViewModel matches what the user sees in the modal.
+                    headline = userObj?.safeStr("headline") ?: headline,
+                    location = userObj?.safeStr("location") ?: location,
+                    bio = userObj?.safeStr("bio") ?: bio,
+                    website = userObj?.safeStr("website") ?: website,
+                    avatarUrl = userObj?.safeStr("profile_image_url") ?: avatarUrl,
+                    coverUrl = userObj?.safeStr("cover_image_url") ?: coverUrl,
+                    work = userObj?.safeStr("work") ?: work,
+                    education = userObj?.safeStr("education") ?: education
                 )
             }
             true
@@ -1379,11 +1422,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
             if (token.isNotBlank()) {
                 val userObj = respJson.optJSONObject("user")
-                val name = userObj?.optString("name") ?: email.substringBefore("@").replace(".", " ").replaceFirstChar { it.uppercase() }
-                val username = userObj?.optString("username") ?: email.substringBefore("@")
-                val avatar = userObj?.optString("profile_image_url", userObj?.optString("avatar", null))
+                val name = userObj?.safeStr("name") ?: email.substringBefore("@").replace(".", " ").replaceFirstChar { it.uppercase() }
+                val username = userObj?.safeStr("username") ?: email.substringBefore("@")
+                val avatar = userObj?.safeStr("profile_image_url") ?: userObj?.safeStr("avatar")
                     ?: getDefaultStoryAvatar(name, username)
-                val userId = userObj?.optString("id", "")?.takeIf { it.isNotBlank() }
+                val userId = userObj?.safeStr("id")
                     ?: extractUserIdFromToken(token)
                     ?: ""
                 val isVerifiedVal = userObj?.opt("is_verified") ?: userObj?.opt("isVerified")
@@ -1398,7 +1441,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         avatarUrl = avatar,
                         isVerified = isVerifiedVal
                     )
-                    // If user was drafting a story, keep/reopen story dialog
                     if (storyDraftText.isNotBlank() || storyDraftUploadedUrl != null) {
                         isCreateStoryOpen = true
                     }
@@ -1462,12 +1504,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             val rawToken = respJson.optString("token", respJson.optString("accessToken", ""))
             val token = rawToken.trim().removeSurrounding("\"").removePrefix("Bearer ").removePrefix("bearer ").trim()
             val userObj = respJson.optJSONObject("user")
-            val resolvedName = userObj?.optString("name", name.trim()) ?: name.trim()
-            val resolvedUsername = userObj?.optString("username", username?.trim() ?: email.substringBefore("@"))
-                ?: (username?.trim() ?: email.substringBefore("@"))
-            val avatar = userObj?.optString("profile_image_url", userObj?.optString("avatar", null))
+            val resolvedName = userObj?.safeStr("name") ?: name.trim()
+            val resolvedUsername = userObj?.safeStr("username") ?: (username?.trim() ?: email.substringBefore("@"))
+            val avatar = userObj?.safeStr("profile_image_url") ?: userObj?.safeStr("avatar")
                 ?: getDefaultStoryAvatar(resolvedName, resolvedUsername)
-            val userId = userObj?.optString("id", "")?.takeIf { it.isNotBlank() }
+            val userId = userObj?.safeStr("id")
                 ?: extractUserIdFromToken(token)
                 ?: ""
             val isVerifiedVal = userObj?.opt("is_verified") ?: userObj?.opt("isVerified")
@@ -1518,7 +1559,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // ============================================================
-    // STORY SERVICE METHODS (Exact endpoints & logic as Story.tsx)
+    // STORY SERVICE METHODS
     // ============================================================
     fun loadStories() {
         viewModelScope.launch {
@@ -1550,7 +1591,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                                 }
                             }
 
-                            // Fetch real user profiles for all story authors from the backend
                             val uniqueAuthorIds = active.map { it.userId }.distinct()
                             uniqueAuthorIds.forEach { uid ->
                                 if (!verifiedUsersMap.containsKey(uid) || !userProfilesCache.containsKey(uid)) {
@@ -1678,16 +1718,16 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 )
 
                 val serverStory = StoryType(
-                    id = storyObj.optString("id"),
-                    userId = storyObj.optString("user_id", userObj.id),
-                    slug = storyObj.optString("slug", ""),
-                    type = storyObj.optString("type", payload.type),
-                    textContent = storyObj.optString("text_content").takeIf { it.isNotBlank() } ?: payload.textContent,
-                    backgroundStyle = storyObj.optString("background_style").takeIf { it.isNotBlank() } ?: payload.backgroundStyle,
-                    mediaUrl = storyObj.optString("media_url").takeIf { it.isNotBlank() } ?: payload.mediaUrl,
-                    mediaThumb = storyObj.optString("media_thumb").takeIf { it.isNotBlank() } ?: payload.mediaThumb,
-                    createdAt = storyObj.optString("created_at", nowIso),
-                    expiresAt = storyObj.optString("expires_at", payload.expiresAt),
+                    id = storyObj.safeStr("id") ?: "",
+                    userId = storyObj.safeStr("user_id") ?: userObj.id,
+                    slug = storyObj.safeStr("slug") ?: "",
+                    type = storyObj.safeStr("type") ?: payload.type,
+                    textContent = storyObj.safeStr("text_content") ?: payload.textContent,
+                    backgroundStyle = storyObj.safeStr("background_style") ?: payload.backgroundStyle,
+                    mediaUrl = storyObj.safeStr("media_url") ?: payload.mediaUrl,
+                    mediaThumb = storyObj.safeStr("media_thumb") ?: payload.mediaThumb,
+                    createdAt = storyObj.safeStr("created_at") ?: nowIso,
+                    expiresAt = storyObj.safeStr("expires_at") ?: payload.expiresAt,
                     isActive = storyObj.opt("is_active") ?: 1,
                     viewsCount = storyObj.optInt("views_count", 0),
                     user = userObj
@@ -1767,9 +1807,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             parsed ?: run {
                 val json = JSONObject(jsonStr)
                 UploadResponse(
-                    url = json.optString("url", json.optString("dataUrl", null)),
-                    thumbnailUrl = json.optString("thumbnail_url", json.optString("url", null)),
-                    dataUrl = json.optString("dataUrl", null)
+                    url = json.safeStr("url") ?: json.safeStr("dataUrl"),
+                    thumbnailUrl = json.safeStr("thumbnail_url") ?: json.safeStr("url"),
+                    dataUrl = json.safeStr("dataUrl")
                 )
             }
         }
@@ -1777,13 +1817,27 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     var uploadError by mutableStateOf<String?>(null)
 
+    // ═══ FIX A — uploadImage: check auth FIRST, wrap compressor with a specific
+    // error, surface HttpException code/body, log the raw response, parse url/dataUrl.
     suspend fun uploadImage(context: Context, uri: Uri): String? = withContext(Dispatchers.IO) {
         uploadError = null
         try {
-            // 1. Compress (ImageCompressor validates image/*, caps 8MB, scales 1600px, JPEG q85→40, ≤500KB)
-            val compressed = ImageCompressor.processImageUri(context, uri).getOrThrow()
+            // 0. Auth check before compressing — gives a clear error if token is gone
+            val auth = authHeader
+            if (auth.isNullOrBlank()) {
+                uploadError = "Please sign in to upload"
+                return@withContext null
+            }
 
-            // 2. Build multipart parts (field names match /api/upload)
+            // 1. Compress
+            val compressed = try {
+                ImageCompressor.processImageUri(context, uri).getOrThrow()
+            } catch (e: Exception) {
+                uploadError = "Could not process image: ${e.message ?: "unsupported format"}"
+                return@withContext null
+            }
+
+            // 2. Build multipart parts
             val filePart = MultipartBody.Part.createFormData(
                 "file",
                 compressed.mainFileName,
@@ -1792,17 +1846,32 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             val namePart = MultipartBody.Part.createFormData("name", compressed.mainFileName)
             val altPart = MultipartBody.Part.createFormData("altText", "")
 
-            // 3. Upload via existing Retrofit method
-            val auth = authHeader
-            val resp = api.uploadMedia(auth, filePart, null, namePart, altPart)
+            // 3. Upload
+            val resp = try {
+                api.uploadMedia(auth, filePart, null, namePart, altPart)
+            } catch (e: retrofit2.HttpException) {
+                val errBody = e.response()?.errorBody()?.string().orEmpty()
+                uploadError = when (e.code()) {
+                    401, 403 -> "Session expired — please sign in again"
+                    413 -> "Image too large"
+                    else -> "Upload failed (${e.code()}): $errBody"
+                }
+                if (e.code() == 401 || e.code() == 403) handleSessionExpired()
+                return@withContext null
+            }
 
-            // 4. Parse { url }
+            // 4. Parse { url } or { dataUrl }
             val rawStr = resp.string()
+            android.util.Log.d("AppState", "upload response: $rawStr")
             val json = JSONObject(rawStr)
-            val url = json.optString("url", json.optString("dataUrl", ""))
-            if (url.isBlank()) throw IllegalStateException("Upload failed")
+            val url = (json.safeStr("url") ?: json.safeStr("dataUrl")).orEmpty()
+            if (url.isBlank()) {
+                uploadError = "Server did not return an image URL"
+                return@withContext null
+            }
             url
         } catch (e: Exception) {
+            android.util.Log.e("AppState", "uploadImage failed", e)
             uploadError = e.message ?: "Upload failed"
             null
         }
@@ -1919,5 +1988,3 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 }
-
-
