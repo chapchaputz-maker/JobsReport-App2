@@ -48,11 +48,17 @@ import com.example.ui.theme.TextMuted
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
 
+import com.example.data.formatNotificationDisplay
+import com.example.data.formatNotificationRelativeTime
+import com.example.state.NavRoute
+
 @Composable
 fun NotificationBellModal(
     viewModel: AppViewModel,
     onDismiss: () -> Unit
 ) {
+    val unread = viewModel.unreadNotificationsCount
+
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
@@ -60,7 +66,7 @@ fun NotificationBellModal(
         Box(
             modifier = Modifier
                 .fillMaxWidth(0.92f)
-                .heightIn(max = 450.dp)
+                .heightIn(max = 500.dp)
                 .clip(RoundedCornerShape(24.dp))
                 .background(BgSurface)
                 .border(1.dp, BorderWhite10, RoundedCornerShape(24.dp))
@@ -81,7 +87,7 @@ fun NotificationBellModal(
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "LIVE SYSTEM ALERTS",
+                            text = "NOTIFICATIONS",
                             color = TextPrimary,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Bold,
@@ -105,12 +111,12 @@ fun NotificationBellModal(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "${viewModel.unreadCount} Unread Telemetry Signals",
+                        text = if (unread > 0) "$unread Unread Notification${if (unread != 1) "s" else ""}" else "All caught up",
                         color = TextMuted,
                         fontSize = 11.sp
                     )
 
-                    if (viewModel.unreadCount > 0) {
+                    if (unread > 0) {
                         TextButton(onClick = { viewModel.markAllNotificationsRead() }) {
                             Text("Mark all read", color = LightBlue, fontSize = 11.sp)
                         }
@@ -119,56 +125,148 @@ fun NotificationBellModal(
 
                 Spacer(modifier = Modifier.height(8.dp))
 
-                LazyColumn(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    items(viewModel.notifications, key = { it.id }) { item ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(14.dp))
-                                .background(if (item.isUnread) BgCard else BgSurface)
-                                .border(1.dp, BorderWhite10, RoundedCornerShape(14.dp))
-                                .padding(12.dp),
-                            verticalAlignment = Alignment.Top
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(8.dp)
-                                    .clip(CircleShape)
-                                    .background(if (item.isUnread) PrimaryBlue else Color.Transparent)
+                val liveList = viewModel.notificationsList
+                if (liveList.isNotEmpty()) {
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(liveList, key = { it.id }) { item ->
+                            val (actorName, displayTitle) = formatNotificationDisplay(
+                                item,
+                                viewModel.getUserNameById(item.actorId)
                             )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Text(
-                                        text = item.title,
-                                        color = TextPrimary,
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Bold
+                            val timeStr = formatNotificationRelativeTime(item.createdAt)
+
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .background(if (!item.isRead) PrimaryBlue.copy(alpha = 0.1f) else BgCard)
+                                    .border(
+                                        1.dp,
+                                        if (!item.isRead) PrimaryBlue.copy(alpha = 0.3f) else BorderWhite10,
+                                        RoundedCornerShape(14.dp)
                                     )
-                                    Text(
-                                        text = item.timeAgo,
-                                        color = TextMuted,
-                                        fontSize = 10.sp,
-                                        fontFamily = FontFamily.Monospace
-                                    )
-                                }
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(
-                                    text = item.description,
-                                    color = TextSecondary,
-                                    fontSize = 11.sp
+                                    .clickable {
+                                        viewModel.handleNotificationClick(item)
+                                        onDismiss()
+                                    }
+                                    .padding(12.dp),
+                                verticalAlignment = Alignment.Top
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .padding(top = 4.dp)
+                                        .size(8.dp)
+                                        .clip(CircleShape)
+                                        .background(if (!item.isRead) LightBlue else Color.Transparent)
                                 )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Text(
+                                            text = displayTitle,
+                                            color = TextPrimary,
+                                            fontSize = 12.sp,
+                                            fontWeight = if (!item.isRead) FontWeight.Bold else FontWeight.SemiBold,
+                                            modifier = Modifier.weight(1f, fill = false)
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text(
+                                            text = timeStr,
+                                            color = TextMuted,
+                                            fontSize = 10.sp,
+                                            fontFamily = FontFamily.Monospace
+                                        )
+                                    }
+                                    if (!item.body.isNullOrBlank()) {
+                                        Spacer(modifier = Modifier.height(3.dp))
+                                        Text(
+                                            text = item.body,
+                                            color = TextSecondary,
+                                            fontSize = 11.sp,
+                                            maxLines = 2
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
+                } else {
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(viewModel.notifications, key = { it.id }) { item ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .background(if (item.isUnread) BgCard else BgSurface)
+                                    .border(1.dp, BorderWhite10, RoundedCornerShape(14.dp))
+                                    .padding(12.dp),
+                                verticalAlignment = Alignment.Top
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(8.dp)
+                                        .clip(CircleShape)
+                                        .background(if (item.isUnread) PrimaryBlue else Color.Transparent)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Text(
+                                            text = item.title,
+                                            color = TextPrimary,
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                        Text(
+                                            text = item.timeAgo,
+                                            color = TextMuted,
+                                            fontSize = 10.sp,
+                                            fontFamily = FontFamily.Monospace
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = item.description,
+                                        color = TextSecondary,
+                                        fontSize = 11.sp
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                TextButton(
+                    onClick = {
+                        viewModel.openNotifications()
+                        onDismiss()
+                    },
+                    modifier = Modifier.align(Alignment.CenterHorizontally)
+                ) {
+                    Text(
+                        text = "View All Notifications",
+                        color = LightBlue,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
                 }
             }
         }

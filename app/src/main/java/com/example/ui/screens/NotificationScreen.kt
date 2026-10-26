@@ -78,6 +78,7 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.example.data.AppNotification
 import com.example.data.formatNotificationRelativeTime
+import com.example.data.formatNotificationDisplay
 import com.example.data.getDefaultNotificationAvatar
 import com.example.data.parseNotificationTimeMs
 import com.example.state.AppViewModel
@@ -129,9 +130,10 @@ fun NotificationScreen(
             } else {
                 val q = searchQuery.trim().lowercase()
                 viewModel.notificationsList.filter { n ->
-                    n.title.lowercase().contains(q) ||
-                            (n.body ?: "").lowercase().contains(q) ||
-                            (n.actor?.name ?: "").lowercase().contains(q)
+                    val (actor, title) = formatNotificationDisplay(n, viewModel.getUserNameById(n.actorId))
+                    title.lowercase().contains(q) ||
+                            actor.lowercase().contains(q) ||
+                            (n.body ?: "").lowercase().contains(q)
                 }
             }
         }
@@ -414,6 +416,7 @@ fun NotificationScreen(
                         items(newList, key = { "new_${it.id}" }) { item ->
                             NotificationCard(
                                 item = item,
+                                fallbackUserName = viewModel.getUserNameById(item.actorId),
                                 onClick = { viewModel.handleNotificationClick(item) },
                                 onToggleRead = { viewModel.markNotificationRead(item.id, !item.isRead) },
                                 onDelete = { viewModel.deleteNotification(item.id) }
@@ -429,6 +432,7 @@ fun NotificationScreen(
                         items(todayList, key = { "today_${it.id}" }) { item ->
                             NotificationCard(
                                 item = item,
+                                fallbackUserName = viewModel.getUserNameById(item.actorId),
                                 onClick = { viewModel.handleNotificationClick(item) },
                                 onToggleRead = { viewModel.markNotificationRead(item.id, !item.isRead) },
                                 onDelete = { viewModel.deleteNotification(item.id) }
@@ -444,6 +448,7 @@ fun NotificationScreen(
                         items(earlierList, key = { "earlier_${it.id}" }) { item ->
                             NotificationCard(
                                 item = item,
+                                fallbackUserName = viewModel.getUserNameById(item.actorId),
                                 onClick = { viewModel.handleNotificationClick(item) },
                                 onToggleRead = { viewModel.markNotificationRead(item.id, !item.isRead) },
                                 onDelete = { viewModel.deleteNotification(item.id) }
@@ -573,25 +578,33 @@ private fun SectionHeader(title: String, count: Int) {
 @Composable
 private fun NotificationCard(
     item: AppNotification,
+    fallbackUserName: String? = null,
     onClick: () -> Unit,
     onToggleRead: () -> Unit,
     onDelete: () -> Unit
 ) {
     var menuOpen by remember { mutableStateOf(false) }
 
+    val (actorName, displayTitle) = remember(item, fallbackUserName) {
+        formatNotificationDisplay(item, fallbackUserName)
+    }
+
     // Icon info
-    val (iconVector, badgeBg) = remember(item.type) {
-        when (item.type) {
-            "job_created" -> Pair(Icons.Default.Work, Color(0xFF1877F2))
-            "story_created" -> Pair(Icons.Default.AutoAwesome, Color(0xFFA033FF))
-            "job_daily" -> Pair(Icons.Default.Work, Color(0xFF10B981))
-            else -> Pair(Icons.Default.Notifications, Color(0xFF1877F2))
+    val (iconVector, badgeBg) = remember(item.type, item.entityType, item.link) {
+        val isStory = item.type.contains("story", ignoreCase = true) ||
+                item.entityType?.equals("story", ignoreCase = true) == true ||
+                item.link?.contains("/stories", ignoreCase = true) == true ||
+                item.link?.contains("/story", ignoreCase = true) == true
+        when {
+            isStory -> Pair(Icons.Default.AutoAwesome, Color(0xFFA033FF))
+            item.type == "job_daily" -> Pair(Icons.Default.Work, Color(0xFF10B981))
+            else -> Pair(Icons.Default.Work, Color(0xFF1877F2))
         }
     }
 
-    val actorName = item.actor?.name?.trim() ?: ""
     val avatarUrl = item.actor?.profileImageUrl?.takeIf { it.isNotBlank() }
-        ?: getDefaultNotificationAvatar(actorName.ifEmpty { item.title }, item.actorId ?: item.id)
+        ?: item.imageUrl?.takeIf { it.isNotBlank() }
+        ?: getDefaultNotificationAvatar(actorName.ifEmpty { displayTitle }, item.actorId ?: item.actor?.id ?: item.id)
 
     val relativeTime = remember(item.createdAt) {
         formatNotificationRelativeTime(item.createdAt)
@@ -658,16 +671,16 @@ private fun NotificationCard(
                     .weight(1f)
                     .padding(end = 4.dp)
             ) {
-                // Title (With bold actor name if present)
-                val annotatedTitle = remember(item.title, actorName) {
+                // Title (With bold actor name if present, e.g. "Jastin Beda shared new Job story")
+                val annotatedTitle = remember(displayTitle, actorName) {
                     buildAnnotatedString {
-                        if (actorName.isNotBlank() && item.title.startsWith(actorName, ignoreCase = true)) {
+                        if (actorName.isNotBlank() && displayTitle.startsWith(actorName, ignoreCase = true)) {
                             withStyle(SpanStyle(fontWeight = FontWeight.Bold, color = TextPrimary)) {
-                                append(actorName)
+                                append(displayTitle.substring(0, actorName.length))
                             }
-                            append(item.title.substring(actorName.length))
+                            append(displayTitle.substring(actorName.length))
                         } else {
-                            append(item.title)
+                            append(displayTitle)
                         }
                     }
                 }

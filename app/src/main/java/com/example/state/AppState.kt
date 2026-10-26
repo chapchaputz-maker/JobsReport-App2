@@ -39,6 +39,7 @@ import com.example.data.AppNotification
 import com.example.data.NotificationActor
 import com.example.data.getDefaultNotificationAvatar
 import com.example.data.formatNotificationRelativeTime
+import com.example.data.formatNotificationDisplay
 import com.example.data.parseNotificationTimeMs
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.Types
@@ -223,6 +224,15 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 pendingProfileFetches.remove(userId)
             }
         }
+    }
+
+    fun getUserNameById(userId: String?): String? {
+        if (userId.isNullOrBlank()) return null
+        if (currentUser?.id == userId) return currentUser?.name
+        val cached = userProfilesCache[userId]?.name
+        if (cached != null) return cached
+        ensureUserProfileLoaded(userId)
+        return null
     }
 
     fun isUserFollowed(userId: String): Boolean = followedUserIds.contains(userId)
@@ -669,30 +679,113 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 val arr = json.optJSONArray("notifications") ?: JSONArray()
                 for (i in 0 until arr.length()) {
                     val obj = arr.optJSONObject(i) ?: continue
+
                     val actorObj = obj.optJSONObject("actor")
-                    val actor = if (actorObj != null) {
+                        ?: obj.optJSONObject("user")
+                        ?: obj.optJSONObject("sender")
+                        ?: obj.optJSONObject("author")
+
+                    val actorId = actorObj?.optString("id")?.takeIf { it.isNotBlank() }
+                        ?: actorObj?.optString("_id")?.takeIf { it.isNotBlank() }
+                        ?: obj.optString("actorId").takeIf { it.isNotBlank() }
+                        ?: obj.optString("actor_id").takeIf { it.isNotBlank() }
+                        ?: obj.optString("userId").takeIf { it.isNotBlank() }
+                        ?: obj.optString("user_id").takeIf { it.isNotBlank() }
+
+                    val actorName = actorObj?.optString("name")?.takeIf { it.isNotBlank() }
+                        ?: actorObj?.optString("fullName")?.takeIf { it.isNotBlank() }
+                        ?: actorObj?.optString("full_name")?.takeIf { it.isNotBlank() }
+                        ?: actorObj?.optString("displayName")?.takeIf { it.isNotBlank() }
+                        ?: actorObj?.optString("display_name")?.takeIf { it.isNotBlank() }
+                        ?: actorObj?.optString("username")?.takeIf { it.isNotBlank() }
+                        ?: obj.optString("actorName").takeIf { it.isNotBlank() }
+                        ?: obj.optString("actor_name").takeIf { it.isNotBlank() }
+                        ?: obj.optString("senderName").takeIf { it.isNotBlank() }
+                        ?: obj.optString("sender_name").takeIf { it.isNotBlank() }
+                        ?: obj.optString("userName").takeIf { it.isNotBlank() }
+                        ?: obj.optString("user_name").takeIf { it.isNotBlank() }
+                        ?: obj.optString("authorName").takeIf { it.isNotBlank() }
+                        ?: obj.optString("author_name").takeIf { it.isNotBlank() }
+
+                    val actorUsername = actorObj?.optString("username")?.takeIf { it.isNotBlank() }
+                        ?: obj.optString("actorUsername").takeIf { it.isNotBlank() }
+                        ?: obj.optString("username").takeIf { it.isNotBlank() }
+
+                    val actorAvatar = actorObj?.optString("profileImageUrl")?.takeIf { it.isNotBlank() }
+                        ?: actorObj?.optString("profile_image_url")?.takeIf { it.isNotBlank() }
+                        ?: actorObj?.optString("avatar")?.takeIf { it.isNotBlank() }
+                        ?: actorObj?.optString("avatar_url")?.takeIf { it.isNotBlank() }
+                        ?: actorObj?.optString("imageUrl")?.takeIf { it.isNotBlank() }
+                        ?: obj.optString("actorImage").takeIf { it.isNotBlank() }
+                        ?: obj.optString("actor_image").takeIf { it.isNotBlank() }
+                        ?: obj.optString("avatar").takeIf { it.isNotBlank() }
+
+                    val actor = if (actorName != null || actorId != null || actorAvatar != null) {
                         NotificationActor(
-                            id = actorObj.optString("id").takeIf { it.isNotBlank() },
-                            name = actorObj.optString("name").takeIf { it.isNotBlank() },
-                            username = actorObj.optString("username").takeIf { it.isNotBlank() },
-                            profileImageUrl = actorObj.optString("profileImageUrl").takeIf { it.isNotBlank() }
+                            id = actorId,
+                            name = actorName,
+                            username = actorUsername,
+                            profileImageUrl = actorAvatar
                         )
                     } else null
+
+                    if (actor != null && !actor.id.isNullOrBlank() && !actor.name.isNullOrBlank()) {
+                        userProfilesCache[actor.id] = StoryUser(
+                            id = actor.id,
+                            name = actor.name,
+                            username = actor.username,
+                            profileImageUrl = actor.profileImageUrl
+                        )
+                    }
+
+                    val rawTitle = obj.optString("title").takeIf { it.isNotBlank() }
+                        ?: obj.optString("message").takeIf { it.isNotBlank() }
+                        ?: obj.optString("text").takeIf { it.isNotBlank() }
+                        ?: obj.optString("subject").takeIf { it.isNotBlank() }
+                        ?: ""
+
+                    val rawBody = obj.optString("body").takeIf { it.isNotBlank() }
+                        ?: obj.optString("message").takeIf { it.isNotBlank() && it != rawTitle }
+                        ?: obj.optString("description").takeIf { it.isNotBlank() }
+                        ?: obj.optString("content").takeIf { it.isNotBlank() }
+
+                    val notifLink = obj.optString("link").takeIf { it.isNotBlank() }
+                        ?: obj.optString("url").takeIf { it.isNotBlank() }
+                        ?: obj.optString("action_url").takeIf { it.isNotBlank() }
+
+                    val notifType = obj.optString("type").takeIf { it.isNotBlank() }
+                        ?: obj.optString("notification_type").takeIf { it.isNotBlank() }
+                        ?: "job_created"
+
+                    val entityType = obj.optString("entityType").takeIf { it.isNotBlank() }
+                        ?: obj.optString("entity_type").takeIf { it.isNotBlank() }
+                        ?: obj.optString("targetType").takeIf { it.isNotBlank() }
+
+                    val entityId = obj.optString("entityId").takeIf { it.isNotBlank() }
+                        ?: obj.optString("entity_id").takeIf { it.isNotBlank() }
+                        ?: obj.optString("targetId").takeIf { it.isNotBlank() }
+                        ?: obj.optString("job_id").takeIf { it.isNotBlank() }
+                        ?: obj.optString("story_id").takeIf { it.isNotBlank() }
+
+                    val notifImg = obj.optString("imageUrl").takeIf { it.isNotBlank() }
+                        ?: obj.optString("image").takeIf { it.isNotBlank() }
+                        ?: actorAvatar
 
                     list.add(
                         AppNotification(
                             id = obj.optString("id", "${System.currentTimeMillis()}_$i"),
-                            type = obj.optString("type", "job_created"),
-                            title = obj.optString("title", ""),
-                            body = obj.optString("body").takeIf { it.isNotBlank() },
-                            link = obj.optString("link").takeIf { it.isNotBlank() },
-                            imageUrl = obj.optString("imageUrl").takeIf { it.isNotBlank() },
-                            actorId = obj.optString("actorId").takeIf { it.isNotBlank() },
+                            type = notifType,
+                            title = rawTitle,
+                            body = rawBody,
+                            link = notifLink,
+                            imageUrl = notifImg,
+                            actorId = actorId,
                             actor = actor,
-                            entityType = obj.optString("entityType").takeIf { it.isNotBlank() },
-                            entityId = obj.optString("entityId").takeIf { it.isNotBlank() },
+                            entityType = entityType,
+                            entityId = entityId,
                             isRead = obj.optBoolean("isRead", false) || obj.optInt("isRead", 0) == 1,
-                            createdAt = obj.optString("createdAt", "")
+                            createdAt = obj.optString("createdAt").takeIf { it.isNotBlank() }
+                                ?: obj.optString("created_at", "")
                         )
                     )
                 }
@@ -807,19 +900,188 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         if (!notification.isRead) {
             markNotificationRead(notification.id, true)
         }
+
+        val type = notification.type.lowercase().trim()
+        val entityType = notification.entityType?.lowercase()?.trim() ?: ""
         val rawLink = notification.link?.trim() ?: ""
-        if (rawLink.isNotBlank()) {
-            when {
-                rawLink.contains("/stories") -> navigateTo(NavRoute.STORIES)
-                rawLink.contains("/jobs") || rawLink.contains("/careerredirect") -> {
-                    navigateTo(NavRoute.ALL_JOBS)
-                }
-                rawLink.contains("/profile") || rawLink.contains("/u/") -> {
+        val rawTitle = notification.title.lowercase().trim()
+        val rawBody = (notification.body ?: "").lowercase().trim()
+
+        val isStory = type.contains("story") ||
+                entityType == "story" ||
+                rawLink.contains("/stories") ||
+                rawLink.contains("/story") ||
+                rawTitle.contains("story") ||
+                rawTitle.contains("stoty") ||
+                rawBody.contains("story") ||
+                rawBody.contains("stoty")
+
+        if (isStory) {
+            openStoryFromNotification(notification)
+            return
+        }
+
+        val isJob = type.contains("job") ||
+                entityType == "job" ||
+                rawLink.contains("/job") ||
+                rawLink.contains("/careerredirect") ||
+                rawTitle.contains("job") ||
+                rawBody.contains("job")
+
+        if (isJob) {
+            openJobFromNotification(notification)
+            return
+        }
+
+        when {
+            rawLink.contains("/profile") || rawLink.contains("/u/") || entityType == "user" -> {
+                val targetUid = notification.entityId ?: notification.actorId ?: notification.actor?.id
+                if (!targetUid.isNullOrBlank()) {
+                    openUserProfileById(targetUid)
+                } else {
                     openUserProfile(null)
                 }
-                rawLink.contains("/reports") -> navigateTo(NavRoute.JOB_REPORTS)
-                else -> navigateTo(NavRoute.INTELLIGENCE_FEED)
             }
+            rawLink.contains("/reports") || entityType == "report" -> {
+                val slug = notification.entityId ?: extractParamFromLink(rawLink, "slug")
+                if (!slug.isNullOrBlank()) {
+                    val existing = reports.find { it.slug == slug || it.id == slug }
+                    if (existing != null) selectReport(existing) else navigateTo(NavRoute.JOB_REPORTS)
+                } else {
+                    navigateTo(NavRoute.JOB_REPORTS)
+                }
+            }
+            else -> {
+                navigateTo(NavRoute.INTELLIGENCE_FEED)
+            }
+        }
+    }
+
+    fun openStoryFromNotification(notification: AppNotification) {
+        val storyId = notification.entityId
+            ?: extractParamFromLink(notification.link, "id")
+            ?: extractParamFromLink(notification.link, "storyId")
+            ?: extractLastPathSegment(notification.link, listOf("stories", "story"))
+
+        val actorId = notification.actorId ?: notification.actor?.id
+
+        // 1. Try to find the story in the existing stories list
+        val existingStory = if (!storyId.isNullOrBlank()) {
+            stories.find { it.id == storyId }
+        } else null ?: if (!actorId.isNullOrBlank()) {
+            stories.find { it.userId == actorId }
+        } else null
+
+        if (existingStory != null) {
+            viewingStory = existingStory
+            navigateTo(NavRoute.STORIES)
+        } else {
+            // Build a story representation from notification details
+            val (actorName, _) = formatNotificationDisplay(notification, getUserNameById(actorId))
+            val finalActorName = actorName.ifBlank { "Community Member" }
+            val authorUser = StoryUser(
+                id = actorId ?: "user_${notification.id}",
+                name = finalActorName,
+                username = notification.actor?.username,
+                profileImageUrl = notification.actor?.profileImageUrl ?: notification.imageUrl ?: getDefaultStoryAvatar(finalActorName, actorId ?: notification.id)
+            )
+
+            val createdStory = StoryType(
+                id = storyId ?: "story_${notification.id}",
+                userId = authorUser.id,
+                user = authorUser,
+                textContent = notification.body?.takeIf { it.isNotBlank() } ?: notification.title,
+                mediaUrl = notification.imageUrl,
+                createdAt = notification.createdAt,
+                expiresAt = ""
+            )
+
+            if (stories.none { it.id == createdStory.id }) {
+                stories = listOf(createdStory) + stories
+            }
+            viewingStory = createdStory
+            navigateTo(NavRoute.STORIES)
+
+            // Trigger sync in case new stories were posted
+            loadStories()
+        }
+    }
+
+    fun openJobFromNotification(notification: AppNotification) {
+        val jobId = notification.entityId
+            ?: extractParamFromLink(notification.link, "id")
+            ?: extractParamFromLink(notification.link, "jobId")
+            ?: extractLastPathSegment(notification.link, listOf("jobs", "job", "job-detail", "careerredirect"))
+
+        // 1. Check if job is already cached
+        val existingJob = if (!jobId.isNullOrBlank()) {
+            activeJobs.find { it.id == jobId }
+                ?: savedJobs.find { it.id == jobId }
+                ?: categoryJobs.find { it.id == jobId }
+                ?: selectedCompanyJobs.find { it.id == jobId }
+        } else null
+
+        if (existingJob != null) {
+            selectJob(existingJob)
+        } else {
+            // 2. Build JobOpportunity from notification details and select it
+            val (actorName, displayTitle) = formatNotificationDisplay(notification, getUserNameById(notification.actorId))
+            val companyName = actorName.ifBlank { "JobsReport" }
+
+            var cleanTitle = notification.title.trim()
+            if (cleanTitle.startsWith(companyName, ignoreCase = true)) {
+                cleanTitle = cleanTitle.substring(companyName.length).trim()
+            }
+            cleanTitle = cleanTitle
+                .removePrefix("posted a new job:")
+                .removePrefix("posted new job:")
+                .removePrefix("shared new job:")
+                .removePrefix("posted a new job")
+                .removePrefix("posted new job")
+                .removePrefix("shared new job")
+                .trim()
+            if (cleanTitle.startsWith(":")) cleanTitle = cleanTitle.substring(1).trim()
+            if (cleanTitle.isBlank()) {
+                cleanTitle = displayTitle.removePrefix("$companyName posted a new job: ").removePrefix("$companyName posted: ").ifBlank { "Job Opportunity" }
+            }
+
+            val fallbackJob = JobOpportunity(
+                id = jobId ?: "job_${notification.id}",
+                title = cleanTitle,
+                company = companyName,
+                description = notification.body ?: notification.title,
+                logoUrl = notification.imageUrl ?: notification.actor?.profileImageUrl,
+                postedAt = formatNotificationRelativeTime(notification.createdAt),
+                location = "East Africa & Remote"
+            )
+            selectJob(fallbackJob)
+        }
+    }
+
+    private fun extractParamFromLink(link: String?, paramName: String): String? {
+        if (link.isNullOrBlank()) return null
+        return try {
+            val uri = Uri.parse(link)
+            uri.getQueryParameter(paramName)
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun extractLastPathSegment(link: String?, expectedPrefixes: List<String>): String? {
+        if (link.isNullOrBlank()) return null
+        return try {
+            val uri = Uri.parse(link)
+            val segments = uri.pathSegments ?: emptyList()
+            if (segments.size >= 2 && expectedPrefixes.any { it.equals(segments[0], ignoreCase = true) }) {
+                segments[1]
+            } else if (segments.size == 1 && expectedPrefixes.any { it.equals(segments[0], ignoreCase = true) }) {
+                null
+            } else {
+                segments.lastOrNull()
+            }
+        } catch (_: Exception) {
+            null
         }
     }
 

@@ -68,3 +68,76 @@ fun formatNotificationRelativeTime(iso: String?): String {
         }
     }
 }
+
+/**
+ * Formats a notification so the sender / actor's name is prominently displayed.
+ * (e.g. "Jastin Beda shared new Job story" or "Company posted a new job: ...")
+ * Returns Pair(actorName, displayTitle).
+ */
+fun formatNotificationDisplay(
+    item: AppNotification,
+    fallbackUserName: String? = null
+): Pair<String, String> {
+    val actorName = item.actor?.name?.trim()?.takeIf { it.isNotBlank() }
+        ?: item.actor?.username?.trim()?.takeIf { it.isNotBlank() }
+        ?: fallbackUserName?.trim()?.takeIf { it.isNotBlank() }
+        ?: ""
+
+    val rawTitle = item.title.trim()
+    val isStory = item.type.contains("story", ignoreCase = true) ||
+            item.entityType?.equals("story", ignoreCase = true) == true ||
+            item.link?.contains("/stories", ignoreCase = true) == true ||
+            item.link?.contains("/story", ignoreCase = true) == true ||
+            rawTitle.contains("story", ignoreCase = true) ||
+            rawTitle.contains("stoty", ignoreCase = true)
+
+    val isJob = item.type.contains("job", ignoreCase = true) ||
+            item.entityType?.equals("job", ignoreCase = true) == true ||
+            item.link?.contains("/job", ignoreCase = true) == true ||
+            item.link?.contains("/careerredirect", ignoreCase = true) == true
+
+    val displayTitle = when {
+        // Story notification with actor name
+        isStory && actorName.isNotBlank() -> {
+            when {
+                rawTitle.startsWith(actorName, ignoreCase = true) -> rawTitle
+                rawTitle.startsWith("shared", ignoreCase = true) -> "$actorName $rawTitle"
+                rawTitle.isBlank() ||
+                    rawTitle.equals("new job story", ignoreCase = true) ||
+                    rawTitle.equals("new story", ignoreCase = true) ||
+                    rawTitle.equals("story created", ignoreCase = true) -> "$actorName shared new Job story"
+                else -> "$actorName shared new Job story: $rawTitle"
+            }
+        }
+        // Story notification without actor name
+        isStory -> {
+            if (rawTitle.isBlank()) "Shared new Job story" else rawTitle
+        }
+        // Job notification with actor/company name
+        isJob && actorName.isNotBlank() -> {
+            when {
+                rawTitle.startsWith(actorName, ignoreCase = true) -> rawTitle
+                rawTitle.startsWith("posted", ignoreCase = true) || rawTitle.startsWith("shared", ignoreCase = true) -> "$actorName $rawTitle"
+                rawTitle.isBlank() -> "$actorName posted a new job opportunity"
+                else -> "$actorName posted a new job: $rawTitle"
+            }
+        }
+        // Generic action verbs (e.g. "shared...", "posted...", "applied...")
+        actorName.isNotBlank() && (
+            rawTitle.startsWith("shared", ignoreCase = true) ||
+            rawTitle.startsWith("posted", ignoreCase = true) ||
+            rawTitle.startsWith("applied", ignoreCase = true) ||
+            rawTitle.startsWith("commented", ignoreCase = true) ||
+            rawTitle.startsWith("liked", ignoreCase = true)
+        ) -> {
+            if (rawTitle.startsWith(actorName, ignoreCase = true)) rawTitle else "$actorName $rawTitle"
+        }
+        rawTitle.isNotBlank() -> rawTitle
+        !item.body.isNullOrBlank() -> item.body.trim()
+        actorName.isNotBlank() -> "$actorName sent a notification"
+        else -> "Notification"
+    }
+
+    return Pair(actorName, displayTitle)
+}
+
