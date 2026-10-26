@@ -27,6 +27,45 @@
 
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+
+            <!-- Android App Links Intent Filter for jobsreport.online -->
+            <!--
+                android:autoVerify="true": Requests automatic domain verification using Digital Asset Links (assetlinks.json)
+                ACTION_VIEW + CATEGORY_DEFAULT + CATEGORY_BROWSABLE: Qualifies activity to handle web URLs directly
+                http & https schemes on both bare domain and www subdomain
+                Explicit path prefixes for core destinations, with pathPrefix="/" as forward-compatible catch-all
+            -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+
+                <data android:scheme="http" />
+                <data android:scheme="https" />
+                <data android:host="jobsreport.online" />
+                <data android:host="www.jobsreport.online" />
+
+                <data android:path="/" />
+                <data android:pathPrefix="/jobs" />
+                <data android:pathPrefix="/job-detail" />
+                <data android:pathPrefix="/u" />
+                <data android:pathPrefix="/profile" />
+                <data android:pathPrefix="/post-job" />
+                <data android:pathPrefix="/stories" />
+                <data android:pathPrefix="/market" />
+                <data android:pathPrefix="/companies" />
+                <data android:pathPrefix="/reports" />
+                <data android:pathPrefix="/region" />
+                <data android:pathPrefix="/category" />
+                <data android:pathPrefix="/saved-jobs" />
+                <data android:pathPrefix="/notifications" />
+                <data android:pathPrefix="/about-us" />
+                <data android:pathPrefix="/disclaimer" />
+                <data android:pathPrefix="/privacy-policy" />
+                <data android:pathPrefix="/auth" />
+                <data android:pathPrefix="/" />
+            </intent-filter>
         </activity>
     </application>
 
