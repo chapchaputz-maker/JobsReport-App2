@@ -63,6 +63,9 @@ import android.net.Uri
 import androidx.compose.ui.platform.LocalContext
 import coil.compose.AsyncImage
 import com.example.data.JobOpportunity
+import com.example.data.resolvePosterName
+import com.example.data.resolvePosterAvatar
+import com.example.data.resolvePosterUserId
 import com.example.state.AppViewModel
 import com.example.state.NavRoute
 import com.example.ui.components.JobsPagination
@@ -408,6 +411,9 @@ fun JobsListScreen(viewModel: AppViewModel) {
                                 Toast.LENGTH_SHORT
                             ).show()
                         },
+                        onPosterClick = { userId, name, avatar ->
+                            viewModel.openUserProfileByName(userId, name, avatar)
+                        },
                         onClick = { viewModel.selectJob(job) }
                     )
                     if ((index + 1) % 3 == 0) {
@@ -540,6 +546,7 @@ private fun MarketJobCard(
     index: Int,
     isSaved: Boolean = false,
     onToggleSave: () -> Unit = {},
+    onPosterClick: (userId: String, name: String, avatarUrl: String) -> Unit = { _, _, _ -> },
     onClick: () -> Unit = {}
 ) {
     val isExpired = job.isJobExpired()
@@ -722,6 +729,61 @@ private fun MarketJobCard(
                         color = TextMuted,
                         fontSize = 9.sp,
                         fontFamily = FontFamily.Monospace
+                    )
+                }
+            }
+
+            // Divider
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(1.dp)
+                    .background(BorderWhite5)
+            )
+
+            // Row 4: Posted By user info
+            val posterName = job.resolvePosterName()
+            val posterAvatar = job.resolvePosterAvatar()
+            val posterUserId = job.resolvePosterUserId()
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable {
+                        onPosterClick(posterUserId, posterName, posterAvatar)
+                    }
+                    .padding(vertical = 2.dp, horizontal = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                AsyncImage(
+                    model = posterAvatar,
+                    contentDescription = posterName,
+                    modifier = Modifier
+                        .size(22.dp)
+                        .clip(CircleShape)
+                        .background(BgDeep)
+                        .border(1.dp, PrimaryBlue.copy(alpha = 0.4f), CircleShape),
+                    contentScale = ContentScale.Crop
+                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(3.dp)
+                ) {
+                    Text(
+                        text = "By",
+                        color = TextMuted,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Text(
+                        text = posterName,
+                        color = LightBlue,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
             }

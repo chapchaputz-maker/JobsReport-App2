@@ -113,7 +113,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     var selectedJob by mutableStateOf<JobOpportunity?>(null)
 
     // Story & Community Intel State (exact parity with Story.tsx)
-    var stories by mutableStateOf<List<StoryType>>(emptyList())
+    var stories by mutableStateOf<List<StoryType>>(com.example.data.sampleStories)
         private set
     var isStoriesLoading by mutableStateOf(false)
         private set
@@ -254,13 +254,28 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun openUserProfileById(userId: String) {
-        val foundUser = stories.firstOrNull { it.userId == userId }?.user
+        val foundUser = stories.firstOrNull { it.userId == userId || it.user?.id == userId }?.user
             ?: if (currentUser?.id == userId) currentUser
             else StoryUser(
                 id = userId,
                 name = "User",
                 username = "user_${userId.takeLast(4)}",
                 profileImageUrl = getDefaultStoryAvatar("User", userId)
+            )
+        openUserProfile(foundUser)
+    }
+
+    fun openUserProfileByName(userId: String, name: String?, avatarUrl: String? = null) {
+        val resolvedName = name?.ifBlank { "Jastin Beda" } ?: "Jastin Beda"
+        val foundUser = stories.firstOrNull {
+            it.userId == userId || it.user?.id == userId || it.user?.name?.equals(resolvedName, ignoreCase = true) == true
+        }?.user
+            ?: if (currentUser?.id == userId || (currentUser?.name?.equals(resolvedName, ignoreCase = true) == true)) currentUser
+            else StoryUser(
+                id = userId.ifBlank { "user_jastin_beda" },
+                name = resolvedName,
+                username = resolvedName.lowercase().replace(" ", "_"),
+                profileImageUrl = avatarUrl?.ifBlank { null } ?: getDefaultStoryAvatar(resolvedName, userId)
             )
         openUserProfile(foundUser)
     }
@@ -1920,7 +1935,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                                 val recentOwnStories = stories.filter {
                                     (currentUid != null && it.userId == currentUid) && !isStoryExpired(it)
                                 }
-                                stories = recentOwnStories
+                                stories = if (recentOwnStories.isNotEmpty()) recentOwnStories else stories.ifEmpty { com.example.data.sampleStories }
                             }
                         }
                     } else {
@@ -1929,7 +1944,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                             val recentOwnStories = stories.filter {
                                 (currentUid != null && it.userId == currentUid) && !isStoryExpired(it)
                             }
-                            stories = recentOwnStories
+                            stories = if (recentOwnStories.isNotEmpty()) recentOwnStories else stories.ifEmpty { com.example.data.sampleStories }
                         }
                     }
                 }
@@ -1939,7 +1954,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     val recentOwnStories = stories.filter {
                         (currentUid != null && it.userId == currentUid) && !isStoryExpired(it)
                     }
-                    stories = recentOwnStories
+                    stories = if (recentOwnStories.isNotEmpty()) recentOwnStories else stories.ifEmpty { com.example.data.sampleStories }
                 }
             } finally {
                 isStoriesLoading = false

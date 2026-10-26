@@ -34,6 +34,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.automirrored.filled.Launch
 import androidx.compose.material.icons.filled.Bookmark
@@ -83,6 +84,9 @@ import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
 import com.example.data.JobAttachment
 import com.example.data.JobOpportunity
+import com.example.data.resolvePosterName
+import com.example.data.resolvePosterAvatar
+import com.example.data.resolvePosterUserId
 import com.example.state.AppViewModel
 import com.example.state.NavRoute
 import com.example.ui.theme.AmberYellow
@@ -462,6 +466,77 @@ fun JobDetailScreen(viewModel: AppViewModel) {
                                 text = if (isExpired) "Expired: ${job.expiresAt}" else "Expires: ${job.expiresAt}",
                                 tint = if (isExpired) DangerRed else AmberYellow
                             )
+                        }
+                    }
+
+                    // Posted By user info
+                    val posterName = job.resolvePosterName()
+                    val posterAvatar = job.resolvePosterAvatar()
+                    val posterUserId = job.resolvePosterUserId()
+
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(BgDeep)
+                            .border(1.dp, BorderWhite5, RoundedCornerShape(12.dp))
+                            .clickable {
+                                viewModel.openUserProfileByName(posterUserId, posterName, posterAvatar)
+                            }
+                            .padding(10.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                AsyncImage(
+                                    model = posterAvatar,
+                                    contentDescription = posterName,
+                                    modifier = Modifier
+                                        .size(32.dp)
+                                        .clip(CircleShape)
+                                        .border(1.5.dp, PrimaryBlue.copy(alpha = 0.5f), CircleShape),
+                                    contentScale = ContentScale.Crop
+                                )
+                                Column {
+                                    Text(
+                                        text = "POSTED BY",
+                                        color = TextMuted,
+                                        fontSize = 9.sp,
+                                        fontFamily = FontFamily.Monospace,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Text(
+                                        text = "By $posterName",
+                                        color = LightBlue,
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
+                            }
+
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Text(
+                                    text = "View Profile",
+                                    color = LightBlue,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Medium
+                                )
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                                    contentDescription = "View Profile",
+                                    tint = LightBlue,
+                                    modifier = Modifier.size(12.dp)
+                                )
+                            }
                         }
                     }
                 }

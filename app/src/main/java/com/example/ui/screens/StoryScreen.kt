@@ -32,11 +32,13 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -45,18 +47,22 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AddCircleOutline
 import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.ErrorOutline
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -69,10 +75,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -254,7 +262,8 @@ fun StoryScreen(viewModel: AppViewModel) {
                     val author = viewModel.getResolvedUser(authorId, activeStories.firstOrNull { it.userId == authorId }?.user)
                     viewModel.openUserProfile(author)
                 },
-                onRequestLogin = { viewModel.openAuth() }
+                onRequestLogin = { viewModel.openAuth() },
+                onLoadMore = { viewModel.loadStories() }
             )
 
             Spacer(modifier = Modifier.height(16.dp))
@@ -309,13 +318,16 @@ fun StoryScreen(viewModel: AppViewModel) {
                 }
             }
 
-            // Grid of Stories
+            // Grid of Stories with 6-item pagination and See More button
+            var visibleGridCount by remember { mutableIntStateOf(6) }
+            val displayedGridStories = activeStories.take(visibleGridCount)
+            val chunkedStories = displayedGridStories.chunked(2)
+
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 12.dp)
             ) {
-                val chunkedStories = activeStories.chunked(2)
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     chunkedStories.forEach { rowItems ->
                         Row(
@@ -338,6 +350,73 @@ fun StoryScreen(viewModel: AppViewModel) {
                             }
                             if (rowItems.size == 1) {
                                 Spacer(modifier = Modifier.weight(1f))
+                            }
+                        }
+                    }
+                }
+            }
+
+            // "See More" button that requests/reveals 6 more stories
+            if (activeStories.size > visibleGridCount || activeStories.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(16.dp))
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp)
+                ) {
+                    Button(
+                        onClick = {
+                            visibleGridCount += 6
+                            viewModel.loadStories()
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = StoryBgCard,
+                            contentColor = LightBlue
+                        ),
+                        border = BorderStroke(1.dp, StoryBorderSlate)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            if (viewModel.isStoriesLoading) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(16.dp),
+                                    color = LightBlue,
+                                    strokeWidth = 2.dp
+                                )
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Default.ExpandMore,
+                                    contentDescription = "See More Stories",
+                                    tint = LightBlue,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                            Text(
+                                text = if (activeStories.size > visibleGridCount) "See More Stories (+6)" else "Load More Stories",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = LightBlue
+                            )
+                            if (activeStories.size > visibleGridCount) {
+                                Box(
+                                    modifier = Modifier
+                                        .clip(CircleShape)
+                                        .background(StoryPrimaryBlue.copy(alpha = 0.2f))
+                                        .padding(horizontal = 8.dp, vertical = 2.dp)
+                                ) {
+                                    Text(
+                                        text = "${displayedGridStories.size}/${activeStories.size}",
+                                        fontSize = 11.sp,
+                                        fontFamily = FontFamily.Monospace,
+                                        color = TextSecondary
+                                    )
+                                }
                             }
                         }
                     }
@@ -442,7 +521,8 @@ fun StoryReel(
     onViewStory: (StoryType) -> Unit,
     onProfileClick: (String) -> Unit,
     onRequestLogin: () -> Unit,
-    flat: Boolean = false
+    flat: Boolean = false,
+    onLoadMore: (() -> Unit)? = null
 ) {
     val active = remember(stories) { stories.filter { !isStoryExpired(it) } }
 
@@ -462,6 +542,29 @@ fun StoryReel(
         out
     }
 
+    var visibleLimit by remember { mutableIntStateOf(6) }
+    val listState = rememberLazyListState()
+
+    // Horizontal Infinite Scroll: as user scrolls near the end, load 6 more
+    LaunchedEffect(listState, uniqueUsers.size) {
+        snapshotFlow {
+            val total = listState.layoutInfo.totalItemsCount
+            val last = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+            total > 0 && last >= total - 2
+        }.collect { nearEnd ->
+            if (nearEnd) {
+                if (visibleLimit < uniqueUsers.size) {
+                    visibleLimit += 6
+                }
+                onLoadMore?.invoke()
+            }
+        }
+    }
+
+    val displayedStories = remember(uniqueUsers, visibleLimit) {
+        uniqueUsers.take(visibleLimit)
+    }
+
     val baseModifier = if (flat) {
         Modifier
             .fillMaxWidth()
@@ -476,6 +579,7 @@ fun StoryReel(
 
     Box(modifier = baseModifier) {
         LazyRow(
+            state = listState,
             modifier = Modifier.fillMaxWidth(),
             contentPadding = PaddingValues(
                 horizontal = if (flat) 16.dp else 12.dp
@@ -490,7 +594,7 @@ fun StoryReel(
                 )
             }
 
-            items(uniqueUsers, key = { it.id }) { story ->
+            items(displayedStories, key = { it.id }) { story ->
                 val resolvedAuthor = authorProvider?.invoke(story.userId, story.user) ?: story.user
                 val isVerified = isUserVerified?.invoke(story.userId, resolvedAuthor)
                     ?: (resolvedAuthor?.isUserVerified == true)
@@ -503,6 +607,48 @@ fun StoryReel(
                     onProfileClick = { onProfileClick(story.userId) },
                     onAddMore = onCreateStory
                 )
+            }
+
+            if (uniqueUsers.size > visibleLimit) {
+                item(key = "load_more_reel_card") {
+                    Box(
+                        modifier = Modifier
+                            .width(115.dp)
+                            .height(210.dp)
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(StoryBgCard)
+                            .border(1.dp, StoryBorderSlate, RoundedCornerShape(16.dp))
+                            .clickable {
+                                visibleLimit += 6
+                                onLoadMore?.invoke()
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.padding(8.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.AddCircleOutline,
+                                contentDescription = "Load More Stories",
+                                tint = LightBlue,
+                                modifier = Modifier.size(32.dp)
+                            )
+                            Text(
+                                text = "+6 More",
+                                color = StoryTextWhite,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = "Stories",
+                                color = TextMuted,
+                                fontSize = 10.sp
+                            )
+                        }
+                    }
+                }
             }
         }
     }
