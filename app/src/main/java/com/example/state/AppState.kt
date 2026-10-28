@@ -113,7 +113,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     var selectedJob by mutableStateOf<JobOpportunity?>(null)
 
     // Story & Community Intel State (exact parity with Story.tsx)
-    var stories by mutableStateOf<List<StoryType>>(com.example.data.sampleStories)
+    var stories by mutableStateOf<List<StoryType>>(emptyList())
         private set
     var isStoriesLoading by mutableStateOf(false)
         private set
@@ -1946,7 +1946,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                                 val recentOwnStories = stories.filter {
                                     (currentUid != null && it.userId == currentUid) && !isStoryExpired(it)
                                 }
-                                stories = if (recentOwnStories.isNotEmpty()) recentOwnStories else stories.ifEmpty { com.example.data.sampleStories }
+                                stories = recentOwnStories
                             }
                         }
                     } else {
@@ -1955,7 +1955,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                             val recentOwnStories = stories.filter {
                                 (currentUid != null && it.userId == currentUid) && !isStoryExpired(it)
                             }
-                            stories = if (recentOwnStories.isNotEmpty()) recentOwnStories else stories.ifEmpty { com.example.data.sampleStories }
+                            stories = recentOwnStories
                         }
                     }
                 }
@@ -1965,7 +1965,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     val recentOwnStories = stories.filter {
                         (currentUid != null && it.userId == currentUid) && !isStoryExpired(it)
                     }
-                    stories = if (recentOwnStories.isNotEmpty()) recentOwnStories else stories.ifEmpty { com.example.data.sampleStories }
+                    stories = recentOwnStories
                 }
             } finally {
                 isStoriesLoading = false

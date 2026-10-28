@@ -1120,224 +1120,7 @@ fun getMixedRotatedStories(
     return result
 }
 
-val sampleStories = listOf(
-    StoryType(
-        id = "story_jb_01",
-        userId = "user_jastin_beda",
-        type = "text",
-        textContent = "Just completed our production refactoring for East Africa mobile banking microservices! Scaled 4x throughput with Kotlin Ktor.",
-        backgroundStyle = "linear-gradient(135deg, #1877F2 0%, #0055FF 100%)",
-        createdAt = "2026-10-26T10:00:00Z",
-        expiresAt = "2028-12-31T23:59:59Z",
-        viewsCount = 142,
-        user = StoryUser(
-            id = "user_jastin_beda",
-            name = "Jastin Beda",
-            username = "jastin_beda",
-            headline = "Senior Software Architect & Android Engineer",
-            profileImageUrl = getDefaultStoryAvatar("Jastin Beda", "user_jastin_beda"),
-            isVerified = true
-        )
-    ),
-    StoryType(
-        id = "story_sk_02",
-        userId = "user_sarah_kimani",
-        type = "text",
-        textContent = "Hiring 3 Senior Mobile & Full-Stack Engineers in Nairobi & Remote. Competitive USD packages + equity. DM with your resume!",
-        backgroundStyle = "linear-gradient(135deg, #A033FF 0%, #7000FF 100%)",
-        createdAt = "2026-10-26T09:30:00Z",
-        expiresAt = "2028-12-31T23:59:59Z",
-        viewsCount = 98,
-        user = StoryUser(
-            id = "user_sarah_kimani",
-            name = "Sarah Kimani",
-            username = "sarah_kimani",
-            headline = "Director of Talent at EastAfrica Tech",
-            profileImageUrl = getDefaultStoryAvatar("Sarah Kimani", "user_sarah_kimani"),
-            isVerified = true
-        )
-    ),
-    StoryType(
-        id = "story_dm_03",
-        userId = "user_david_mwangi",
-        type = "text",
-        textContent = "Passed the AWS Solutions Architect Professional exam today! Happy to share my 60-day study notes with the community.",
-        backgroundStyle = "linear-gradient(135deg, #059669 0%, #10B981 100%)",
-        createdAt = "2026-10-26T08:15:00Z",
-        expiresAt = "2028-12-31T23:59:59Z",
-        viewsCount = 76,
-        user = StoryUser(
-            id = "user_david_mwangi",
-            name = "David Mwangi",
-            username = "david_mwangi",
-            headline = "Principal Cloud Security Specialist",
-            profileImageUrl = getDefaultStoryAvatar("David Mwangi", "user_david_mwangi"),
-            isVerified = false
-        )
-    ),
-    StoryType(
-        id = "story_aj_04",
-        userId = "user_amani_john",
-        type = "text",
-        textContent = "Published our new Material 3 design kit on Figma today. 40+ responsive tokens and components tailored for African digital commerce.",
-        backgroundStyle = "linear-gradient(135deg, #EA580C 0%, #F97316 100%)",
-        createdAt = "2026-10-26T07:45:00Z",
-        expiresAt = "2028-12-31T23:59:59Z",
-        viewsCount = 115,
-        user = StoryUser(
-            id = "user_amani_john",
-            name = "Amani John",
-            username = "amani_john",
-            headline = "Lead Product Designer at SwahiliPay",
-            profileImageUrl = getDefaultStoryAvatar("Amani John", "user_amani_john"),
-            isVerified = true
-        )
-    ),
-    StoryType(
-        id = "story_gm_05",
-        userId = "user_grace_mrema",
-        type = "text",
-        textContent = "Q3 Engineering Salary Benchmark report indicates 18% YoY compensation growth for remote AI and data analytics engineers in Tanzania.",
-        backgroundStyle = "linear-gradient(135deg, #0284C7 0%, #0EA5E9 100%)",
-        createdAt = "2026-10-26T06:20:00Z",
-        expiresAt = "2028-12-31T23:59:59Z",
-        viewsCount = 204,
-        user = StoryUser(
-            id = "user_grace_mrema",
-            name = "Grace Mrema",
-            username = "grace_mrema",
-            headline = "Senior Data Analyst & Tech Researcher",
-            profileImageUrl = getDefaultStoryAvatar("Grace Mrema", "user_grace_mrema"),
-            isVerified = false
-        )
-    ),
-    StoryType(
-        id = "story_fo_06",
-        userId = "user_faraji_omondi",
-        type = "text",
-        textContent = "Our team at Kilimanjaro Logistics just open-sourced our real-time GPS telemetry SDK for Android fleet management.",
-        backgroundStyle = "linear-gradient(135deg, #7C3AED 0%, #8B5CF6 100%)",
-        createdAt = "2026-10-26T05:10:00Z",
-        expiresAt = "2028-12-31T23:59:59Z",
-        viewsCount = 89,
-        user = StoryUser(
-            id = "user_faraji_omondi",
-            name = "Faraji Omondi",
-            username = "faraji_omondi",
-            headline = "Staff Software Engineer",
-            profileImageUrl = getDefaultStoryAvatar("Faraji Omondi", "user_faraji_omondi"),
-            isVerified = true
-        )
-    ),
-    StoryType(
-        id = "story_zb_07",
-        userId = "user_zawadi_bakari",
-        type = "text",
-        textContent = "Thrilled to share that I started my new role as Senior Full Stack Engineer at CRDB Bank today! Thanks JobsReport community.",
-        backgroundStyle = "linear-gradient(135deg, #059669 0%, #10B981 100%)",
-        createdAt = "2026-10-25T20:00:00Z",
-        expiresAt = "2028-12-31T23:59:59Z",
-        viewsCount = 312,
-        user = StoryUser(
-            id = "user_zawadi_bakari",
-            name = "Zawadi Bakari",
-            username = "zawadi_bakari",
-            headline = "Full Stack Engineer & Kotlin Enthusiast",
-            profileImageUrl = getDefaultStoryAvatar("Zawadi Bakari", "user_zawadi_bakari"),
-            isVerified = true
-        )
-    ),
-    StoryType(
-        id = "story_kt_08",
-        userId = "user_kelvin_temu",
-        type = "text",
-        textContent = "Tips for junior devs: Master Git interactive rebase and writing deterministic unit tests. It speeds up code reviews tremendously.",
-        backgroundStyle = "linear-gradient(135deg, #1877F2 0%, #0055FF 100%)",
-        createdAt = "2026-10-25T18:30:00Z",
-        expiresAt = "2028-12-31T23:59:59Z",
-        viewsCount = 145,
-        user = StoryUser(
-            id = "user_kelvin_temu",
-            name = "Kelvin Temu",
-            username = "kelvin_temu",
-            headline = "DevOps Engineer & Mentor",
-            profileImageUrl = getDefaultStoryAvatar("Kelvin Temu", "user_kelvin_temu"),
-            isVerified = false
-        )
-    ),
-    StoryType(
-        id = "story_ns_09",
-        userId = "user_neema_swai",
-        type = "text",
-        textContent = "Automated UI tests on Jetpack Compose with test tags shaved 2 hours off our daily release cycle. Clean architecture pays off!",
-        backgroundStyle = "linear-gradient(135deg, #D97706 0%, #F59E0B 100%)",
-        createdAt = "2026-10-25T16:00:00Z",
-        expiresAt = "2028-12-31T23:59:59Z",
-        viewsCount = 67,
-        user = StoryUser(
-            id = "user_neema_swai",
-            name = "Neema Swai",
-            username = "neema_swai",
-            headline = "Mobile QA Automation Lead",
-            profileImageUrl = getDefaultStoryAvatar("Neema Swai", "user_neema_swai"),
-            isVerified = true
-        )
-    ),
-    StoryType(
-        id = "story_bk_10",
-        userId = "user_baraka_kweka",
-        type = "text",
-        textContent = "Tech meetup in Arusha this Saturday at 2 PM! We will discuss scaling cloud native apps and local tech employment opportunities.",
-        backgroundStyle = "linear-gradient(135deg, #DC2626 0%, #EF4444 100%)",
-        createdAt = "2026-10-25T14:15:00Z",
-        expiresAt = "2028-12-31T23:59:59Z",
-        viewsCount = 188,
-        user = StoryUser(
-            id = "user_baraka_kweka",
-            name = "Baraka Kweka",
-            username = "baraka_kweka",
-            headline = "Community Lead & Android Developer",
-            profileImageUrl = getDefaultStoryAvatar("Baraka Kweka", "user_baraka_kweka"),
-            isVerified = false
-        )
-    ),
-    StoryType(
-        id = "story_rm_11",
-        userId = "user_rehema_massawe",
-        type = "text",
-        textContent = "Always check that your Android apps declare least-privilege permissions and handle token refresh with secure Keystore storage.",
-        backgroundStyle = "linear-gradient(135deg, #4F46E5 0%, #6366F1 100%)",
-        createdAt = "2026-10-25T12:00:00Z",
-        expiresAt = "2028-12-31T23:59:59Z",
-        viewsCount = 220,
-        user = StoryUser(
-            id = "user_rehema_massawe",
-            name = "Rehema Massawe",
-            username = "rehema_massawe",
-            headline = "Cybersecurity Analyst & Certified Ethical Hacker",
-            profileImageUrl = getDefaultStoryAvatar("Rehema Massawe", "user_rehema_massawe"),
-            isVerified = true
-        )
-    ),
-    StoryType(
-        id = "story_em_12",
-        userId = "user_elias_mollel",
-        type = "text",
-        textContent = "Proud to see East African tech solutions reaching global markets. The quality of engineering emerging from this region is top tier.",
-        backgroundStyle = "linear-gradient(135deg, #0D9488 0%, #14B8A6 100%)",
-        createdAt = "2026-10-25T10:00:00Z",
-        expiresAt = "2028-12-31T23:59:59Z",
-        viewsCount = 301,
-        user = StoryUser(
-            id = "user_elias_mollel",
-            name = "Elias Mollel",
-            username = "elias_mollel",
-            headline = "Solutions Architect & Tech Consultant",
-            profileImageUrl = getDefaultStoryAvatar("Elias Mollel", "user_elias_mollel"),
-            isVerified = true
-        )
-    )
-)
+val sampleStories = emptyList<StoryType>()
 
 // ============================================================
 // USER AUTH MODELS (JobsReport UserAuth.tsx Parity)
@@ -1367,4 +1150,26 @@ data class AuthResult(
     val token: String? = null,
     val user: StoryUser? = null
 )
+
+/**
+ * Generates an authentic share link for a job post:
+ * e.g. https://jobsreport.online/market/procurement-services-logistics-officer-noa-gva-job-mvrscaw2l4ve
+ */
+fun JobOpportunity.generateShareUrl(): String {
+    val cleanTitle = title.lowercase(java.util.Locale.ROOT)
+        .replace(Regex("[^a-z0-9]+"), "-")
+        .trim('-')
+    val cleanId = id.trim()
+    val slug = if (cleanTitle.isNotBlank()) {
+        if (cleanId.startsWith("job-")) {
+            "$cleanTitle-$cleanId"
+        } else {
+            "$cleanTitle-job-$cleanId"
+        }
+    } else {
+        if (cleanId.startsWith("job-")) cleanId else "job-$cleanId"
+    }
+    return "https://jobsreport.online/market/$slug"
+}
+
 

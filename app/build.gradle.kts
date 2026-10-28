@@ -13,11 +13,11 @@ android {
   compileSdk { version = release(36) { minorApiLevel = 1 } }
 
   defaultConfig {
-    applicationId = "co.jobsreport.ap.rcoino"
+    applicationId = "co.jobsreport.ap"
     minSdk = 24
     targetSdk = 36
-    versionCode = 1
-    versionName = "1.0"
+    versionCode = 320
+    versionName = "3.20"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
@@ -27,14 +27,14 @@ android {
       val keystorePath = System.getenv("KEYSTORE_PATH")
       if (!keystorePath.isNullOrBlank() && file(keystorePath).exists()) {
         storeFile = file(keystorePath)
-        storePassword = System.getenv("STORE_PASSWORD")
+        storePassword = System.getenv("STORE_PASSWORD") ?: "52775277Tanzania"
         keyAlias = System.getenv("KEY_ALIAS") ?: "upload"
-        keyPassword = System.getenv("KEY_PASSWORD")
+        keyPassword = System.getenv("KEY_PASSWORD") ?: "52775277Tanzania"
       } else if (file("${rootDir}/my-upload-key.jks").exists()) {
         storeFile = file("${rootDir}/my-upload-key.jks")
-        storePassword = System.getenv("STORE_PASSWORD")
-        keyAlias = "upload"
-        keyPassword = System.getenv("KEY_PASSWORD")
+        storePassword = System.getenv("STORE_PASSWORD") ?: "52775277Tanzania"
+        keyAlias = System.getenv("KEY_ALIAS") ?: "upload"
+        keyPassword = System.getenv("KEY_PASSWORD") ?: "52775277Tanzania"
       } else {
         storeFile = file("${rootDir}/debug.keystore")
         storePassword = "android"
@@ -130,6 +130,8 @@ dependencies {
   // implementation(libs.play.services.location)
   implementation(libs.retrofit)
   implementation(libs.play.services.ads)
+  implementation(libs.play.app.update)
+  implementation(libs.play.app.update.ktx)
   implementation(libs.androidx.lifecycle.process)
   testImplementation(libs.androidx.compose.ui.test.junit4)
   testImplementation(libs.androidx.core)

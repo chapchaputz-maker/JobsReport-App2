@@ -462,7 +462,7 @@ fun JobsListScreen(viewModel: AppViewModel) {
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = "Post job vacancies directly on JobsReport.online",
+                        text = "Post and manage job vacancies directly in the app",
                         color = TextMuted,
                         fontSize = 11.sp
                     )
@@ -473,7 +473,11 @@ fun JobsListScreen(viewModel: AppViewModel) {
                         .clip(RoundedCornerShape(12.dp))
                         .background(PrimaryBlue)
                         .clickable {
-                            viewModel.openPostJob()
+                            if (viewModel.currentUser == null || viewModel.userToken.isNullOrBlank()) {
+                                viewModel.openAuth()
+                            } else {
+                                viewModel.openPostJob(NavRoute.ALL_JOBS)
+                            }
                         }
                         .padding(horizontal = 12.dp, vertical = 8.dp)
                 ) {

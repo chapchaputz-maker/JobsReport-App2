@@ -61,6 +61,7 @@ import coil.compose.AsyncImage
 import com.example.ads.AdConfig
 import com.example.ads.NativeAdCard
 import com.example.data.Company
+import com.example.ui.components.JobsPagination
 import com.example.data.JobOpportunity
 import com.example.state.AppViewModel
 import com.example.ui.theme.AmberYellow
@@ -607,16 +608,48 @@ fun CompaniesScreen(viewModel: AppViewModel) {
                     }
                 }
 
-                // Company Jobs Openings List
+                // Company Jobs Openings List (5 jobs per page with pagination)
+                val allCompanyJobs = viewModel.selectedCompanyJobs
+                val companyJobsPageSize = 5
+                var companyJobsCurrentPage by remember(selectedCompany.id) { mutableIntStateOf(1) }
+                val totalCompanyJobsPages = remember(allCompanyJobs.size) {
+                    ((allCompanyJobs.size + companyJobsPageSize - 1) / companyJobsPageSize).coerceAtLeast(1)
+                }
+                val paginatedCompanyJobs = remember(allCompanyJobs, companyJobsCurrentPage) {
+                    val startIndex = (companyJobsCurrentPage - 1) * companyJobsPageSize
+                    if (startIndex >= allCompanyJobs.size) {
+                        emptyList()
+                    } else {
+                        allCompanyJobs.subList(
+                            startIndex,
+                            minOf(startIndex + companyJobsPageSize, allCompanyJobs.size)
+                        )
+                    }
+                }
+
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text(
-                        text = "JOB OPENINGS (${viewModel.selectedCompanyJobs.size})",
-                        color = TextPrimary,
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Bold,
-                        fontFamily = FontFamily.Monospace,
-                        letterSpacing = 1.sp
-                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "JOB OPENINGS (${allCompanyJobs.size})",
+                            color = TextPrimary,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace,
+                            letterSpacing = 1.sp
+                        )
+                        if (allCompanyJobs.size > companyJobsPageSize) {
+                            Text(
+                                text = "Page $companyJobsCurrentPage of $totalCompanyJobsPages",
+                                color = TextMuted,
+                                fontSize = 11.sp,
+                                fontFamily = FontFamily.Monospace
+                            )
+                        }
+                    }
 
                     if (viewModel.isCompanyJobsLoading) {
                         Box(
@@ -627,7 +660,7 @@ fun CompaniesScreen(viewModel: AppViewModel) {
                         ) {
                             CircularProgressIndicator(color = LightBlue)
                         }
-                    } else if (viewModel.selectedCompanyJobs.isEmpty()) {
+                    } else if (allCompanyJobs.isEmpty()) {
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -645,7 +678,7 @@ fun CompaniesScreen(viewModel: AppViewModel) {
                         }
                     } else {
                         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                            viewModel.selectedCompanyJobs.forEachIndexed { index, job ->
+                            paginatedCompanyJobs.forEachIndexed { index, job ->
                                 CompanyJobCard(
                                     job = job,
                                     onClick = { viewModel.selectJob(job) }
@@ -655,6 +688,15 @@ fun CompaniesScreen(viewModel: AppViewModel) {
                                 }
                             }
                         }
+
+                        // Pagination Controls (showing 5 jobs per page)
+                        JobsPagination(
+                            currentPage = companyJobsCurrentPage,
+                            totalPages = totalCompanyJobsPages,
+                            totalJobs = allCompanyJobs.size,
+                            onPageChange = { companyJobsCurrentPage = it },
+                            modifier = Modifier.padding(top = 4.dp)
+                        )
                     }
                 }
 

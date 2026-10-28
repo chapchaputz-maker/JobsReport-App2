@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import com.example.ads.AdConfig
 import com.example.ads.NativeAdCard
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -240,7 +241,7 @@ fun CategoryScreen(viewModel: AppViewModel) {
                         onClick = { viewModel.selectJob(job) }
                     )
                     if ((index + 1) % 3 == 0) {
-                        NativeAdCard()
+                        NativeAdCard(adUnitId = AdConfig.getNativeAdUnitId((index + 1) / 3))
                     }
                 }
             }

@@ -81,8 +81,17 @@ object DeepLinkHandler {
             "stories", "story" -> DeepLinkTarget.Stories
             "market" -> {
                 // Format: /market/{slug}
+                // Can be a job link like /market/procurement-services-logistics-officer-noa-gva-job-mvrscaw2l4ve
+                // or a market report slug like /market/annual-tech-report
                 if (!second.isNullOrBlank()) {
-                    DeepLinkTarget.ReportDetail(second)
+                    if (second.contains("-job-")) {
+                        val extractedJobId = second.substringAfterLast("-job-")
+                        DeepLinkTarget.JobDetail(extractedJobId)
+                    } else if (second.startsWith("job-")) {
+                        DeepLinkTarget.JobDetail(second)
+                    } else {
+                        DeepLinkTarget.ReportDetail(second)
+                    }
                 } else {
                     DeepLinkTarget.JobReports
                 }
@@ -159,8 +168,15 @@ object DeepLinkHandler {
             is DeepLinkTarget.JobDetail -> {
                 val id = target.jobId
                 if (!id.isNullOrBlank()) {
-                    val existing = viewModel.activeJobs.find { it.id == id }
-                        ?: viewModel.savedJobs.find { it.id == id }
+                    val existing = viewModel.activeJobs.find {
+                        it.id.equals(id, ignoreCase = true) ||
+                        it.id.endsWith(id, ignoreCase = true) ||
+                        id.endsWith(it.id, ignoreCase = true)
+                    } ?: viewModel.savedJobs.find {
+                        it.id.equals(id, ignoreCase = true) ||
+                        it.id.endsWith(id, ignoreCase = true) ||
+                        id.endsWith(it.id, ignoreCase = true)
+                    }
                     if (existing != null) {
                         viewModel.selectJob(existing)
                     } else {

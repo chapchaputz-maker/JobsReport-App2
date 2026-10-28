@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import com.example.ads.AdConfig
 import com.example.ads.NativeAdCard
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -343,8 +344,8 @@ fun RegionDetailScreen(viewModel: AppViewModel) {
                         isActive = true,
                         onClick = { viewModel.selectJob(job) }
                     )
-                    if ((index + 1) % 3 == 0) {
-                        NativeAdCard()
+                    if ((index + 1) % 2 == 0) {
+                        NativeAdCard(adUnitId = AdConfig.getNativeAdUnitId((index + 1) / 2))
                     }
                 }
             }

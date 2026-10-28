@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import com.example.ads.AdConfig
 import com.example.ads.NativeAdCard
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -423,25 +424,36 @@ fun RegionsScreen(viewModel: AppViewModel) {
                     }
                 }
 
-                items(countryRegions, key = { "region_${it.name}_$countryName" }) { region ->
-                    RegionCardItem(
-                        region = region,
-                        onClick = { viewModel.selectRegion(region.name, region.rawLocationInfo) }
-                    )
+                countryRegions.forEachIndexed { index, region ->
+                    item(key = "region_${region.name}_${countryName}_$index") {
+                        RegionCardItem(
+                            region = region,
+                            onClick = { viewModel.selectRegion(region.name, region.rawLocationInfo) }
+                        )
+                    }
+                    if ((index + 1) % 4 == 0) {
+                        item(key = "country_region_ad_${countryName}_$index") {
+                            NativeAdCard(adUnitId = AdConfig.getNativeAdUnitId((index + 1) / 4))
+                        }
+                    }
                 }
             }
         }
 
         // --- 5. Specific Country Active Regions Grid/List ---
         if (!isWorldwide && activeRegions.isNotEmpty()) {
-            item {
-                NativeAdCard()
-            }
-            items(activeRegions, key = { "region_${it.name}" }) { region ->
-                RegionCardItem(
-                    region = region,
-                    onClick = { viewModel.selectRegion(region.name, region.rawLocationInfo) }
-                )
+            activeRegions.forEachIndexed { index, region ->
+                item(key = "region_${region.name}_$index") {
+                    RegionCardItem(
+                        region = region,
+                        onClick = { viewModel.selectRegion(region.name, region.rawLocationInfo) }
+                    )
+                }
+                if ((index + 1) % 4 == 0) {
+                    item(key = "active_region_ad_$index") {
+                        NativeAdCard(adUnitId = AdConfig.getNativeAdUnitId((index + 1) / 4))
+                    }
+                }
             }
         }
 

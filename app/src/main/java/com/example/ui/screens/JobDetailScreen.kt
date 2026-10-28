@@ -8,8 +8,10 @@ import android.net.Uri
 import com.example.ads.AdConfig
 import com.example.ads.InterstitialAdManager
 import com.example.ads.NativeAdCard
+import com.example.data.generateShareUrl
 import com.example.data.isJobExpired
 import com.example.data.resolveApplicationUrl
+import com.example.ui.components.CareerRedirectDialog
 import android.text.Html
 import android.widget.TextView
 import android.widget.Toast
@@ -49,10 +51,12 @@ import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Flag
+import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.Work
 import androidx.compose.material3.Button
@@ -103,6 +107,8 @@ import com.example.ui.theme.PrimaryBlue
 import com.example.ui.theme.TextMuted
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
+import com.example.ui.theme.VioletPurple
+import androidx.compose.ui.platform.testTag
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -157,6 +163,9 @@ fun JobDetailScreen(viewModel: AppViewModel) {
     var viewerOpen by remember { mutableStateOf(false) }
     var viewerIndex by remember { mutableIntStateOf(0) }
     val attachments = job.images ?: emptyList()
+
+    // Career Redirect Waiting Modal State
+    var pendingRedirectUrl by remember { mutableStateOf<String?>(null) }
 
     // Related Jobs (excluding current)
     val relatedJobs = remember(job.id, viewModel.activeJobs) {
@@ -254,11 +263,12 @@ fun JobDetailScreen(viewModel: AppViewModel) {
 
                 IconButton(
                     onClick = {
+                        val shareUrl = job.generateShareUrl()
                         val shareIntent = Intent(Intent.ACTION_SEND).apply {
                             type = "text/plain"
                             putExtra(
                                 Intent.EXTRA_TEXT,
-                                "${job.title} at ${job.company} - Check out on JobsReport!"
+                                "${job.title} at ${job.company}\n\nView details & apply on JobsReport: $shareUrl"
                             )
                         }
                         context.startActivity(Intent.createChooser(shareIntent, "Share Job"))
@@ -598,8 +608,7 @@ fun JobDetailScreen(viewModel: AppViewModel) {
                                     val cleaned = job.whatsappNumber.replace(Regex("[^0-9]"), "")
                                     val text = Uri.encode("Hello, I am interested in the ${job.title} position at ${job.company}.")
                                     val waUrl = "https://wa.me/$cleaned?text=$text"
-                                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(waUrl))
-                                    context.startActivity(intent)
+                                    pendingRedirectUrl = waUrl
                                 }
                                 .padding(14.dp),
                             contentAlignment = Alignment.Center
@@ -636,8 +645,7 @@ fun JobDetailScreen(viewModel: AppViewModel) {
                                     )
                                 )
                                 .clickable {
-                                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(applyUrl))
-                                    context.startActivity(intent)
+                                    pendingRedirectUrl = applyUrl
                                 }
                                 .padding(14.dp),
                             contentAlignment = Alignment.Center
@@ -927,6 +935,9 @@ fun JobDetailScreen(viewModel: AppViewModel) {
                     }
                 }
             }
+
+            // --- Promotional Advert: MusicPlay - Offline Personal DJ Player ---
+            MusicPlayAppAdvertCard()
 
             // --- 7. Key Job Details Metadata Table ---
             Box(
@@ -1272,6 +1283,25 @@ fun JobDetailScreen(viewModel: AppViewModel) {
             }
         }
     }
+
+    // --- Career Redirect Verification Modal ---
+    pendingRedirectUrl?.let { targetUrl ->
+        CareerRedirectDialog(
+            targetUrl = targetUrl,
+            company = job.company,
+            jobTitle = job.title,
+            countdownSeconds = 8,
+            onConfirmRedirect = {
+                val urlToOpen = pendingRedirectUrl ?: targetUrl
+                pendingRedirectUrl = null
+                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(urlToOpen))
+                context.startActivity(intent)
+            },
+            onDismiss = {
+                pendingRedirectUrl = null
+            }
+        )
+    }
 }
 
 @Composable
@@ -1315,4 +1345,260 @@ private fun Context.findActivity(): Activity? {
     }
     return null
 }
+
+/**
+ * MusicPlayAppAdvertCard is a custom promotional advertisement card showcasing
+ * "MusicPlay - Offline Personal DJ Player" with direct Google Play integration.
+ */
+@Composable
+private fun MusicPlayAppAdvertCard(modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val playStoreUrl = "https://play.google.com/store/apps/details?id=co.musicplay.ap"
+    val openPlayStore = {
+        try {
+            val marketIntent = Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=co.musicplay.ap")).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(marketIntent)
+        } catch (_: Exception) {
+            val webIntent = Intent(Intent.ACTION_VIEW, Uri.parse(playStoreUrl)).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(webIntent)
+        }
+    }
+
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(22.dp))
+            .background(
+                Brush.linearGradient(
+                    colors = listOf(
+                        Color(0xFF1E1038),
+                        Color(0xFF111827),
+                        Color(0xFF0F172A)
+                    )
+                )
+            )
+            .border(
+                1.dp,
+                Brush.linearGradient(
+                    colors = listOf(
+                        VioletPurple.copy(alpha = 0.55f),
+                        LightBlue.copy(alpha = 0.4f),
+                        AmberYellow.copy(alpha = 0.25f)
+                    )
+                ),
+                RoundedCornerShape(22.dp)
+            )
+            .clickable { openPlayStore() }
+            .padding(18.dp)
+            .testTag("musicplay_app_advert_card")
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            // Header Row: Badges
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .clip(CircleShape)
+                        .background(VioletPurple.copy(alpha = 0.18f))
+                        .border(1.dp, VioletPurple.copy(alpha = 0.45f), CircleShape)
+                        .padding(horizontal = 10.dp, vertical = 4.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.Headphones,
+                            contentDescription = null,
+                            tint = VioletPurple,
+                            modifier = Modifier.size(12.dp)
+                        )
+                        Spacer(modifier = Modifier.width(5.dp))
+                        Text(
+                            text = "FEATURED PARTNER APP",
+                            color = VioletPurple,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace,
+                            letterSpacing = 0.5.sp
+                        )
+                    }
+                }
+
+                Box(
+                    modifier = Modifier
+                        .clip(CircleShape)
+                        .background(EmeraldGreen.copy(alpha = 0.12f))
+                        .border(1.dp, EmeraldGreen.copy(alpha = 0.35f), CircleShape)
+                        .padding(horizontal = 8.dp, vertical = 3.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(6.dp)
+                                .clip(CircleShape)
+                                .background(EmeraldGreen)
+                        )
+                        Spacer(modifier = Modifier.width(5.dp))
+                        Text(
+                            text = "FREE ON PLAY STORE",
+                            color = EmeraldGreen,
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    }
+                }
+            }
+
+            // App Brand Info: Icon + Title + Rating
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(60.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(
+                            Brush.linearGradient(
+                                colors = listOf(
+                                    Color(0xFF7C3AED),
+                                    Color(0xFF2563EB),
+                                    Color(0xFF06B6D4)
+                                )
+                            )
+                        )
+                        .border(1.5.dp, Color.White.copy(alpha = 0.25f), RoundedCornerShape(16.dp)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Headphones,
+                        contentDescription = "MusicPlay App Icon",
+                        tint = Color.White,
+                        modifier = Modifier.size(32.dp)
+                    )
+                }
+
+                Spacer(modifier = Modifier.width(14.dp))
+
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "MusicPlay",
+                        color = Color.White,
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        letterSpacing = 0.3.sp
+                    )
+                    Text(
+                        text = "Offline Personal DJ Player",
+                        color = AmberYellow,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.height(3.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.Star,
+                            contentDescription = null,
+                            tint = AmberYellow,
+                            modifier = Modifier.size(12.dp)
+                        )
+                        Spacer(modifier = Modifier.width(3.dp))
+                        Text(
+                            text = "4.9",
+                            color = Color.White,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "•  Personal Smart DJ",
+                            color = TextMuted,
+                            fontSize = 11.sp
+                        )
+                    }
+                }
+            }
+
+            // Description Body
+            Text(
+                text = "This app can play your songs like Dj or songs you listen in Radio. It mix songs without leaving gap between two songs like normal music Players. Install now",
+                color = TextPrimary.copy(alpha = 0.92f),
+                fontSize = 12.sp,
+                lineHeight = 17.sp,
+                fontWeight = FontWeight.Normal
+            )
+
+            // Feature Highlights Chips
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                listOf("🎧 Gapless DJ Mix", "📻 Radio Style", "⚡ 100% Offline").forEach { feature ->
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color.White.copy(alpha = 0.05f))
+                            .border(1.dp, BorderWhite10, RoundedCornerShape(8.dp))
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                    ) {
+                        Text(
+                            text = feature,
+                            color = TextSecondary,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
+            }
+
+            // Primary CTA Button
+            Button(
+                onClick = { openPlayStore() },
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = PrimaryBlue
+                ),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(46.dp)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.Launch,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "GET MUSICPLAY ON GOOGLE PLAY",
+                        color = Color.White,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace,
+                        letterSpacing = 0.5.sp
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(14.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
 

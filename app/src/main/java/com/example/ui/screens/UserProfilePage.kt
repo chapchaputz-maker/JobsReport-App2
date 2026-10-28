@@ -94,6 +94,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import coil.compose.AsyncImage
+import com.example.ads.AdConfig
+import com.example.ads.NativeAdCard
+import com.example.ads.StoryGridAdCard
 import com.example.data.JobOpportunity
 import com.example.data.StoryType
 import com.example.data.StoryUser
@@ -103,6 +106,11 @@ import com.example.state.NavRoute
 import com.example.ui.components.VerifiedBadge
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+
+private sealed interface ProfileStoryFeedItem {
+    data class Story(val story: StoryType) : ProfileStoryFeedItem
+    data class Ad(val adIndex: Int) : ProfileStoryFeedItem
+}
 
 // ============================================================
 // CONSTANTS
@@ -898,18 +906,25 @@ fun UserProfilePage(
                                 )
                             }
                         } else {
-                            items(visibleJobs, key = { it.id }) { job ->
-                                val canManage = authUser != null && (isAdmin || isOwnProfile)
-                                NativeJobCard(
-                                    job = job,
-                                    canManage = canManage,
-                                    onSelect = {
-                                        viewModel.selectJob(job)
-                                        viewModel.navigateTo(NavRoute.JOB_DETAIL)
-                                    },
-                                    onEdit = { viewModel.openEditJob(job, NavRoute.USER_PROFILE) },
-                                    onDelete = { jobToDelete = job }
-                                )
+                            visibleJobs.forEachIndexed { index, job ->
+                                item(key = "user_job_${job.id}") {
+                                    val canManage = authUser != null && (isAdmin || isOwnProfile)
+                                    NativeJobCard(
+                                        job = job,
+                                        canManage = canManage,
+                                        onSelect = {
+                                            viewModel.selectJob(job)
+                                            viewModel.navigateTo(NavRoute.JOB_DETAIL)
+                                        },
+                                        onEdit = { viewModel.openEditJob(job, NavRoute.USER_PROFILE) },
+                                        onDelete = { jobToDelete = job }
+                                    )
+                                }
+                                if ((index + 1) % 5 == 0) {
+                                    item(key = "user_job_ad_$index") {
+                                        NativeAdCard(adUnitId = AdConfig.getNativeAdUnitId((index + 1) / 5))
+                                    }
+                                }
                             }
 
                             item {
@@ -970,15 +985,36 @@ fun UserProfilePage(
                                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
                                     verticalArrangement = Arrangement.spacedBy(10.dp)
                                 ) {
-                                    val rows = visibleStories.chunked(2)
+                                    val storyDisplayItems = remember(visibleStories) {
+                                        val items = mutableListOf<ProfileStoryFeedItem>()
+                                        var adCount = 0
+                                        visibleStories.forEachIndexed { index, story ->
+                                            items.add(ProfileStoryFeedItem.Story(story))
+                                            if ((index + 1) % 4 == 0) {
+                                                items.add(ProfileStoryFeedItem.Ad(adCount++))
+                                            }
+                                        }
+                                        items
+                                    }
+
+                                    val rows = storyDisplayItems.chunked(2)
                                     rows.forEach { pair ->
                                         Row(
                                             modifier = Modifier.fillMaxWidth(),
                                             horizontalArrangement = Arrangement.spacedBy(10.dp)
                                         ) {
-                                            pair.forEach { s ->
+                                            pair.forEach { item ->
                                                 Box(modifier = Modifier.weight(1f)) {
-                                                    NativeStoryCard(story = s, onClick = { viewingStory = s })
+                                                    when (item) {
+                                                        is ProfileStoryFeedItem.Story -> {
+                                                            NativeStoryCard(story = item.story, onClick = { viewingStory = item.story })
+                                                        }
+                                                        is ProfileStoryFeedItem.Ad -> {
+                                                            StoryGridAdCard(
+                                                                adUnitId = AdConfig.getNativeAdUnitId(item.adIndex)
+                                                            )
+                                                        }
+                                                    }
                                                 }
                                             }
                                             if (pair.size == 1) Spacer(modifier = Modifier.weight(1f))
