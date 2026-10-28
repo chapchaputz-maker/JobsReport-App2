@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import com.example.ads.AdConfig
 import com.example.ads.NativeAdCard
 import com.example.data.isJobExpired
 import androidx.compose.foundation.background
@@ -416,8 +417,8 @@ fun JobsListScreen(viewModel: AppViewModel) {
                         },
                         onClick = { viewModel.selectJob(job) }
                     )
-                    if ((index + 1) % 3 == 0) {
-                        NativeAdCard()
+                    if ((index + 1) % 2 == 0) {
+                        NativeAdCard(adUnitId = AdConfig.getNativeAdUnitId((index + 1) / 2))
                     }
                 }
             }
@@ -546,7 +547,7 @@ private fun MarketJobCard(
     index: Int,
     isSaved: Boolean = false,
     onToggleSave: () -> Unit = {},
-    onPosterClick: (userId: String, name: String, avatarUrl: String) -> Unit = { _, _, _ -> },
+    onPosterClick: (userId: String, name: String, avatarUrl: String?) -> Unit = { _, _, _ -> },
     onClick: () -> Unit = {}
 ) {
     val isExpired = job.isJobExpired()
@@ -733,58 +734,63 @@ private fun MarketJobCard(
                 }
             }
 
-            // Divider
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(1.dp)
-                    .background(BorderWhite5)
-            )
-
-            // Row 4: Posted By user info
+            // Row 4: Posted By user info - only show if poster exists
             val posterName = job.resolvePosterName()
-            val posterAvatar = job.resolvePosterAvatar()
-            val posterUserId = job.resolvePosterUserId()
+            if (!posterName.isNullOrBlank()) {
+                val nonNullName = posterName
+                val posterAvatar = job.resolvePosterAvatar()
+                val nonNullUserId = job.resolvePosterUserId()?.takeIf { it.isNotBlank() } ?: nonNullName
 
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(8.dp))
-                    .clickable {
-                        onPosterClick(posterUserId, posterName, posterAvatar)
-                    }
-                    .padding(vertical = 2.dp, horizontal = 2.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                AsyncImage(
-                    model = posterAvatar,
-                    contentDescription = posterName,
+                // Divider
+                Box(
                     modifier = Modifier
-                        .size(22.dp)
-                        .clip(CircleShape)
-                        .background(BgDeep)
-                        .border(1.dp, PrimaryBlue.copy(alpha = 0.4f), CircleShape),
-                    contentScale = ContentScale.Crop
+                        .fillMaxWidth()
+                        .height(1.dp)
+                        .background(BorderWhite5)
                 )
+
                 Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable {
+                            onPosterClick(nonNullUserId, nonNullName, posterAvatar)
+                        }
+                        .padding(vertical = 2.dp, horizontal = 2.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(3.dp)
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text(
-                        text = "By",
-                        color = TextMuted,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Medium
-                    )
-                    Text(
-                        text = posterName,
-                        color = LightBlue,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
+                    if (!posterAvatar.isNullOrBlank()) {
+                        AsyncImage(
+                            model = posterAvatar,
+                            contentDescription = posterName,
+                            modifier = Modifier
+                                .size(22.dp)
+                                .clip(CircleShape)
+                                .background(BgDeep)
+                                .border(1.dp, PrimaryBlue.copy(alpha = 0.4f), CircleShape),
+                            contentScale = ContentScale.Crop
+                        )
+                    }
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(3.dp)
+                    ) {
+                        Text(
+                            text = "By",
+                            color = TextMuted,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Text(
+                            text = posterName,
+                            color = LightBlue,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
                 }
             }
         }

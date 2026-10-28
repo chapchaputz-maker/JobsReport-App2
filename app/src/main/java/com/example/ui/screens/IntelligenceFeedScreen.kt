@@ -62,6 +62,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import com.example.ads.AdConfig
 import com.example.ads.NativeAdCard
 import com.example.data.JobCategory
 import com.example.data.JobOpportunity
@@ -290,7 +291,8 @@ fun IntelligenceFeedScreen(viewModel: AppViewModel) {
                 flat = true,
                 onLoadMore = {
                     viewModel.loadStories()
-                }
+                },
+                rotationSeed = viewModel.storyRotationSeed
             )
         }
 
@@ -381,8 +383,8 @@ fun IntelligenceFeedScreen(viewModel: AppViewModel) {
             }
         }
 
-        // --- Native Ad 1: Top Feed Placement ---
-        NativeAdCard()
+        // --- Native Ad 1: Top Feed Placement (Unit 1) ---
+        NativeAdCard(adUnitId = AdConfig.getNativeAdUnitId(0))
 
         // --- 3. Job Categories Grid Section ---
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -446,6 +448,9 @@ fun IntelligenceFeedScreen(viewModel: AppViewModel) {
                 }
             }
         }
+
+        // --- Native Ad 2: After Categories Placement (Unit 2) ---
+        NativeAdCard(adUnitId = AdConfig.getNativeAdUnitId(1))
 
         // --- 4. Latest Opportunities (Active Jobs) ---
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -603,8 +608,8 @@ fun IntelligenceFeedScreen(viewModel: AppViewModel) {
             }
         }
 
-        // --- Native Ad 2: Middle Feed Placement ---
-        NativeAdCard()
+        // --- Native Ad 3: Middle Feed Placement (Unit 3) ---
+        NativeAdCard(adUnitId = AdConfig.getNativeAdUnitId(2))
 
         // --- 5. Market Intelligence Reports ---
         if (viewModel.reports.isNotEmpty()) {
@@ -746,6 +751,9 @@ fun IntelligenceFeedScreen(viewModel: AppViewModel) {
             }
         }
 
+        // --- Native Ad 4: Pre-Spotlight Placement (Unit 4) ---
+        NativeAdCard(adUnitId = AdConfig.getNativeAdUnitId(3))
+
         // --- 7. Weekly Spotlight Employers ---
         Box(
             modifier = Modifier
@@ -822,8 +830,8 @@ fun IntelligenceFeedScreen(viewModel: AppViewModel) {
             }
         }
 
-        // --- Native Ad 3: Bottom Feed Placement ---
-        NativeAdCard()
+        // --- Native Ad 5: Bottom Feed Placement (Unit 5) ---
+        NativeAdCard(adUnitId = AdConfig.getNativeAdUnitId(4))
 
         Spacer(modifier = Modifier.height(10.dp))
     }
@@ -923,7 +931,7 @@ private fun JobCardItem(
     job: JobOpportunity,
     isSaved: Boolean = false,
     onToggleSave: () -> Unit = {},
-    onPosterClick: (userId: String, name: String, avatarUrl: String) -> Unit = { _, _, _ -> },
+    onPosterClick: (userId: String, name: String, avatarUrl: String?) -> Unit = { _, _, _ -> },
     onClick: () -> Unit
 ) {
     val isExpired = job.isJobExpired()
@@ -1097,58 +1105,63 @@ private fun JobCardItem(
                 }
             }
 
-            // Divider
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(1.dp)
-                    .background(BorderWhite10.copy(alpha = 0.5f))
-            )
-
-            // Row 4: Posted By User (Click opens user profile)
+            // Row 4: Posted By User (Click opens user profile) - only if poster exists
             val posterName = job.resolvePosterName()
-            val posterAvatar = job.resolvePosterAvatar()
-            val posterUserId = job.resolvePosterUserId()
+            if (!posterName.isNullOrBlank()) {
+                val nonNullName = posterName
+                val posterAvatar = job.resolvePosterAvatar()
+                val nonNullUserId = job.resolvePosterUserId()?.takeIf { it.isNotBlank() } ?: nonNullName
 
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(8.dp))
-                    .clickable {
-                        onPosterClick(posterUserId, posterName, posterAvatar)
-                    }
-                    .padding(vertical = 2.dp, horizontal = 2.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                AsyncImage(
-                    model = posterAvatar,
-                    contentDescription = posterName,
+                // Divider
+                Box(
                     modifier = Modifier
-                        .size(22.dp)
-                        .clip(CircleShape)
-                        .background(BgDeep)
-                        .border(1.dp, PrimaryBlue.copy(alpha = 0.4f), CircleShape),
-                    contentScale = ContentScale.Crop
+                        .fillMaxWidth()
+                        .height(1.dp)
+                        .background(BorderWhite10.copy(alpha = 0.5f))
                 )
+
                 Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable {
+                            onPosterClick(nonNullUserId, nonNullName, posterAvatar)
+                        }
+                        .padding(vertical = 2.dp, horizontal = 2.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(3.dp)
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text(
-                        text = "By",
-                        color = TextMuted,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Medium
-                    )
-                    Text(
-                        text = posterName,
-                        color = LightBlue,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
+                    if (!posterAvatar.isNullOrBlank()) {
+                        AsyncImage(
+                            model = posterAvatar,
+                            contentDescription = posterName,
+                            modifier = Modifier
+                                .size(22.dp)
+                                .clip(CircleShape)
+                                .background(BgDeep)
+                                .border(1.dp, PrimaryBlue.copy(alpha = 0.4f), CircleShape),
+                            contentScale = ContentScale.Crop
+                        )
+                    }
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(3.dp)
+                    ) {
+                        Text(
+                            text = "By",
+                            color = TextMuted,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Text(
+                            text = posterName,
+                            color = LightBlue,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
                 }
             }
         }

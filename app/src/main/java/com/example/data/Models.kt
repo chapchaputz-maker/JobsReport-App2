@@ -52,31 +52,29 @@ data class JobOpportunity(
     @Json(name = "salary_min") val salaryMin: Double? = null,
     @Json(name = "salary_max") val salaryMax: Double? = null,
     @Json(name = "salary_currency") val salaryCurrency: String? = "TZS",
-    @Json(name = "user_id") val userId: String? = "user_jastin_beda",
+    @Json(name = "user_id") val userId: String? = null,
     @Json(name = "user") val user: StoryUser? = null,
-    @Json(name = "posted_by") val postedBy: String? = "Jastin Beda",
-    @Json(name = "poster_name") val posterName: String? = "Jastin Beda",
+    @Json(name = "posted_by") val postedBy: String? = null,
+    @Json(name = "poster_name") val posterName: String? = null,
     @Json(name = "poster_avatar") val posterAvatar: String? = null
 )
 
-fun JobOpportunity.resolvePosterName(): String {
+fun JobOpportunity.resolvePosterName(): String? {
     return this.posterName?.trim()?.takeIf { it.isNotBlank() }
         ?: this.user?.name?.trim()?.takeIf { it.isNotBlank() }
         ?: this.postedBy?.trim()?.takeIf { it.isNotBlank() }
-        ?: "Jastin Beda"
 }
 
-fun JobOpportunity.resolvePosterAvatar(): String {
-    val name = resolvePosterName()
+fun JobOpportunity.resolvePosterAvatar(): String? {
+    val name = resolvePosterName() ?: return null
     return this.posterAvatar?.trim()?.takeIf { it.isNotBlank() }
         ?: this.user?.profileImageUrl?.trim()?.takeIf { it.isNotBlank() }
-        ?: getDefaultStoryAvatar(name, this.userId ?: "jastin_beda")
+        ?: getDefaultStoryAvatar(name, resolvePosterUserId() ?: name)
 }
 
-fun JobOpportunity.resolvePosterUserId(): String {
+fun JobOpportunity.resolvePosterUserId(): String? {
     return this.userId?.trim()?.takeIf { it.isNotBlank() }
         ?: this.user?.id?.trim()?.takeIf { it.isNotBlank() }
-        ?: "user_jastin_beda"
 }
 
 fun JobOpportunity.isJobExpired(): Boolean {
@@ -267,6 +265,10 @@ val sampleJobOpportunities = listOf(
         jobCategory = "Software & Engineering",
         postedAt = "2 hours ago",
         expiresAt = "2026-09-30",
+        userId = "user_jastin_beda",
+        postedBy = "Jastin Beda",
+        posterName = "Jastin Beda",
+        posterAvatar = "https://ui-avatars.com/api/?name=J&background=1877F2&color=fff&size=128&bold=true&rounded=true",
         images = listOf(
             JobAttachment(
                 url = "https://images.unsplash.com/photo-1522071820081-009f0129c71c?w=800",
@@ -324,7 +326,11 @@ val sampleJobOpportunities = listOf(
         country = "Tanzania",
         jobCategory = "Design & Creative",
         postedAt = "3 days ago",
-        expiresAt = "2026-10-01"
+        expiresAt = "2026-10-01",
+        userId = "user_amani_john",
+        postedBy = "Amani John",
+        posterName = "Amani John",
+        posterAvatar = "https://ui-avatars.com/api/?name=A&background=EA580C&color=fff&size=128&bold=true&rounded=true"
     ),
     JobOpportunity(
         id = "job-104",
@@ -1021,6 +1027,97 @@ fun isStoryExpired(story: StoryType): Boolean {
     val expires = story.expiresAt.trim()
     if (expires.isEmpty()) return false
     return parseStoryServerTime(expires) < System.currentTimeMillis()
+}
+
+/**
+ * Smart Story Rotation & Exploration Algorithm:
+ * 1. Strictly filters out expired stories (!isStoryExpired) - expired are NEVER shown.
+ * 2. If pinOwnerFirst is true and currentUserId has an active story, places the owner's latest story first.
+ * 3. Rotates & mixes other active stories so users never see the same static sequence every time they visit or return.
+ * 4. Balances:
+ *    - Recency decay (recent stories get an early freshness lift).
+ *    - Normalized views (logarithmic ln(1 + views) gives popular stories recognition without drowning out new/less-viewed ones).
+ *    - Exploration Jitter (pseudo-random component seeded by session/visit key to continually circulate new discoveries).
+ */
+fun getMixedRotatedStories(
+    stories: List<StoryType>,
+    currentUserId: String? = null,
+    pinOwnerFirst: Boolean = true,
+    uniqueByAuthor: Boolean = false,
+    rotationSeed: Long = System.currentTimeMillis()
+): List<StoryType> {
+    val activeStories = stories.filter { !isStoryExpired(it) }
+    if (activeStories.isEmpty()) return emptyList()
+
+    val myId = currentUserId?.trim().orEmpty()
+    val ownerStories = if (myId.isNotEmpty()) {
+        activeStories.filter { it.userId == myId }
+            .sortedByDescending { parseStoryServerTime(it.createdAt) }
+    } else {
+        emptyList()
+    }
+
+    val otherStories = if (myId.isNotEmpty()) {
+        activeStories.filter { it.userId != myId }
+    } else {
+        activeStories
+    }
+
+    val now = System.currentTimeMillis()
+    val scoredOthers = otherStories.map { story ->
+        val ageHours = ((now - parseStoryServerTime(story.createdAt)).coerceAtLeast(0L)) / 3_600_000.0
+        val recencyScore = 1.0 / (1.0 + (ageHours / 18.0)) // fresh content boost
+
+        val views = (story.viewsCount ?: 0).coerceAtLeast(0)
+        val viewsScore = kotlin.math.ln(1.0 + views.toDouble()) * 0.18 // sublinear, non-dominant
+
+        // Jitter seeded by visit/rotationSeed combined with story id
+        val random = java.util.Random(rotationSeed xor (story.id.hashCode().toLong() shl 16))
+        val explorationJitter = random.nextDouble() * 0.75 // dynamic rotation component
+
+        val totalScore = (recencyScore * 0.35) + (viewsScore * 0.25) + explorationJitter
+        Pair(story, totalScore)
+    }.sortedByDescending { it.second }.map { it.first }
+
+    val result = mutableListOf<StoryType>()
+
+    if (pinOwnerFirst && ownerStories.isNotEmpty()) {
+        result.add(ownerStories[0])
+    }
+
+    if (uniqueByAuthor) {
+        val seenAuthors = mutableSetOf<String>()
+        if (pinOwnerFirst && ownerStories.isNotEmpty()) {
+            seenAuthors.add(ownerStories[0].userId)
+        }
+        for (s in scoredOthers) {
+            if (seenAuthors.add(s.userId)) {
+                result.add(s)
+            }
+        }
+    } else {
+        result.addAll(scoredOthers)
+        if (!pinOwnerFirst && ownerStories.isNotEmpty()) {
+            // In all stories page, include owner stories scored into the mix
+            val scoredOwner = ownerStories.map { story ->
+                val ageHours = ((now - parseStoryServerTime(story.createdAt)).coerceAtLeast(0L)) / 3_600_000.0
+                val recencyScore = 1.0 / (1.0 + (ageHours / 18.0))
+                val views = (story.viewsCount ?: 0).coerceAtLeast(0)
+                val viewsScore = kotlin.math.ln(1.0 + views.toDouble()) * 0.18
+                val random = java.util.Random(rotationSeed xor (story.id.hashCode().toLong() shl 16))
+                val explorationJitter = random.nextDouble() * 0.75
+                val totalScore = (recencyScore * 0.35) + (viewsScore * 0.25) + explorationJitter
+                Pair(story, totalScore)
+            }
+            val allCombined = (scoredOthers.mapIndexed { idx, s -> Pair(s, 1000.0 - idx) } + scoredOwner)
+                .sortedByDescending { it.second }
+                .map { it.first }
+            result.clear()
+            result.addAll(allCombined)
+        }
+    }
+
+    return result
 }
 
 val sampleStories = listOf(

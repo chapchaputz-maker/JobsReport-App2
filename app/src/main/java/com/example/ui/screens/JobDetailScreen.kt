@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.ContextWrapper
 import android.content.Intent
 import android.net.Uri
+import com.example.ads.AdConfig
 import com.example.ads.InterstitialAdManager
 import com.example.ads.NativeAdCard
 import com.example.data.isJobExpired
@@ -469,81 +470,85 @@ fun JobDetailScreen(viewModel: AppViewModel) {
                         }
                     }
 
-                    // Posted By user info
+                    // Posted By user info - only show if poster exists
                     val posterName = job.resolvePosterName()
-                    val posterAvatar = job.resolvePosterAvatar()
-                    val posterUserId = job.resolvePosterUserId()
+                    if (!posterName.isNullOrBlank()) {
+                        val posterAvatar = job.resolvePosterAvatar()
+                        val posterUserId = job.resolvePosterUserId() ?: posterName
 
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(BgDeep)
-                            .border(1.dp, BorderWhite5, RoundedCornerShape(12.dp))
-                            .clickable {
-                                viewModel.openUserProfileByName(posterUserId, posterName, posterAvatar)
-                            }
-                            .padding(10.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(BgDeep)
+                                .border(1.dp, BorderWhite5, RoundedCornerShape(12.dp))
+                                .clickable {
+                                    viewModel.openUserProfileByName(posterUserId, posterName, posterAvatar)
+                                }
+                                .padding(10.dp)
                         ) {
                             Row(
+                                modifier = Modifier.fillMaxWidth(),
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                horizontalArrangement = Arrangement.SpaceBetween
                             ) {
-                                AsyncImage(
-                                    model = posterAvatar,
-                                    contentDescription = posterName,
-                                    modifier = Modifier
-                                        .size(32.dp)
-                                        .clip(CircleShape)
-                                        .border(1.5.dp, PrimaryBlue.copy(alpha = 0.5f), CircleShape),
-                                    contentScale = ContentScale.Crop
-                                )
-                                Column {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    if (!posterAvatar.isNullOrBlank()) {
+                                        AsyncImage(
+                                            model = posterAvatar,
+                                            contentDescription = posterName,
+                                            modifier = Modifier
+                                                .size(32.dp)
+                                                .clip(CircleShape)
+                                                .border(1.5.dp, PrimaryBlue.copy(alpha = 0.5f), CircleShape),
+                                            contentScale = ContentScale.Crop
+                                        )
+                                    }
+                                    Column {
+                                        Text(
+                                            text = "POSTED BY",
+                                            color = TextMuted,
+                                            fontSize = 9.sp,
+                                            fontFamily = FontFamily.Monospace,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                        Text(
+                                            text = "By $posterName",
+                                            color = LightBlue,
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                    }
+                                }
+
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
                                     Text(
-                                        text = "POSTED BY",
-                                        color = TextMuted,
-                                        fontSize = 9.sp,
-                                        fontFamily = FontFamily.Monospace,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                    Text(
-                                        text = "By $posterName",
+                                        text = "View Profile",
                                         color = LightBlue,
-                                        fontSize = 13.sp,
-                                        fontWeight = FontWeight.SemiBold
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                    Icon(
+                                        imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                                        contentDescription = "View Profile",
+                                        tint = LightBlue,
+                                        modifier = Modifier.size(12.dp)
                                     )
                                 }
-                            }
-
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
-                                Text(
-                                    text = "View Profile",
-                                    color = LightBlue,
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Medium
-                                )
-                                Icon(
-                                    imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                                    contentDescription = "View Profile",
-                                    tint = LightBlue,
-                                    modifier = Modifier.size(12.dp)
-                                )
                             }
                         }
                     }
                 }
             }
 
-            // --- Native Ad 1: Before Job Details ---
-            NativeAdCard()
+            // --- Native Ad 1: Before Action Bar (Unit 1) ---
+            NativeAdCard(adUnitId = AdConfig.getNativeAdUnitId(0))
 
             // --- 3. Action / Application Instructions Bar ---
             Box(
@@ -593,16 +598,8 @@ fun JobDetailScreen(viewModel: AppViewModel) {
                                     val cleaned = job.whatsappNumber.replace(Regex("[^0-9]"), "")
                                     val text = Uri.encode("Hello, I am interested in the ${job.title} position at ${job.company}.")
                                     val waUrl = "https://wa.me/$cleaned?text=$text"
-                                    val activity = context.findActivity()
-                                    if (activity != null) {
-                                        InterstitialAdManager.handleApplyAction(activity) {
-                                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(waUrl))
-                                            context.startActivity(intent)
-                                        }
-                                    } else {
-                                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(waUrl))
-                                        context.startActivity(intent)
-                                    }
+                                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(waUrl))
+                                    context.startActivity(intent)
                                 }
                                 .padding(14.dp),
                             contentAlignment = Alignment.Center
@@ -639,16 +636,8 @@ fun JobDetailScreen(viewModel: AppViewModel) {
                                     )
                                 )
                                 .clickable {
-                                    val activity = context.findActivity()
-                                    if (activity != null) {
-                                        InterstitialAdManager.handleApplyAction(activity) {
-                                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(applyUrl))
-                                            context.startActivity(intent)
-                                        }
-                                    } else {
-                                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(applyUrl))
-                                        context.startActivity(intent)
-                                    }
+                                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(applyUrl))
+                                    context.startActivity(intent)
                                 }
                                 .padding(14.dp),
                             contentAlignment = Alignment.Center
@@ -803,6 +792,9 @@ fun JobDetailScreen(viewModel: AppViewModel) {
                     }
                 }
             }
+
+            // --- Native Ad 2: After Safety Alert Banner (Unit 2) ---
+            NativeAdCard(adUnitId = AdConfig.getNativeAdUnitId(1))
 
             // --- 5. Attachments Section (if available) ---
             if (attachments.isNotEmpty()) {
@@ -996,8 +988,8 @@ fun JobDetailScreen(viewModel: AppViewModel) {
                 }
             }
 
-            // --- Native Ad 2: About Company ---
-            NativeAdCard()
+            // --- Native Ad 3: After Job Specifications (Unit 3) ---
+            NativeAdCard(adUnitId = AdConfig.getNativeAdUnitId(2))
 
             // --- 8. About Company & Related Jobs ---
             Box(
@@ -1063,6 +1055,9 @@ fun JobDetailScreen(viewModel: AppViewModel) {
                     }
                 }
             }
+
+            // --- Native Ad 4: Before Related Jobs (Unit 4) ---
+            NativeAdCard(adUnitId = AdConfig.getNativeAdUnitId(3))
 
             if (relatedJobs.isNotEmpty()) {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -1155,8 +1150,8 @@ fun JobDetailScreen(viewModel: AppViewModel) {
                 }
             }
 
-            // --- Native Ad 3: End of Page ---
-            NativeAdCard()
+            // --- Native Ad 5: End of Page (Unit 5) ---
+            NativeAdCard(adUnitId = AdConfig.getNativeAdUnitId(4))
 
             Spacer(modifier = Modifier.height(16.dp))
         }

@@ -51,6 +51,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import com.example.ads.AdConfig
 import com.example.ads.NativeAdCard
 import com.example.data.MarketReport
 import com.example.state.AppViewModel
@@ -235,6 +236,9 @@ fun ReportsScreen(viewModel: AppViewModel) {
             }
         }
 
+        // --- Native Ad 1: Top of Reports (Unit 1) ---
+        NativeAdCard(adUnitId = AdConfig.getNativeAdUnitId(0))
+
         // --- 3. Filter & Search Bar ---
         Column(
             modifier = Modifier
@@ -404,9 +408,19 @@ fun ReportsScreen(viewModel: AppViewModel) {
                         report = report,
                         onClick = { viewModel.selectReport(report) }
                     )
-                    if ((index + 1) % 3 == 0) {
-                        NativeAdCard()
+                    if (index == 1) {
+                        // Native Ad 2 after 2 reports
+                        NativeAdCard(adUnitId = AdConfig.getNativeAdUnitId(1))
+                    } else if (index == 3) {
+                        // Native Ad 3 after 4 reports
+                        NativeAdCard(adUnitId = AdConfig.getNativeAdUnitId(2))
                     }
+                }
+                if (filteredReports.size < 2) {
+                    NativeAdCard(adUnitId = AdConfig.getNativeAdUnitId(1))
+                }
+                if (filteredReports.size < 4) {
+                    NativeAdCard(adUnitId = AdConfig.getNativeAdUnitId(2))
                 }
             }
         }
@@ -542,6 +556,9 @@ fun ReportsScreen(viewModel: AppViewModel) {
                 }
             }
         }
+
+        // --- Native Ad 4: Bottom of Reports Page (Unit 4) ---
+        NativeAdCard(adUnitId = AdConfig.getNativeAdUnitId(3))
     }
 
     // --- Report Detail Modal Dialog ---

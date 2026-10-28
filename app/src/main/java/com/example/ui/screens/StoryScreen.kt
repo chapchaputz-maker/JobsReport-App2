@@ -103,6 +103,10 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
+import com.example.ads.AdConfig
+import com.example.ads.FullScreenStoryAdViewer
+import com.example.ads.StoryGridAdCard
+import com.example.ads.StoryReelAdCard
 import com.example.data.CreateStoryPayload
 import com.example.data.STORY_BACKGROUNDS
 import com.example.data.StoryType
@@ -112,6 +116,7 @@ import com.example.data.formatStoryCount
 import com.example.data.formatStoryTime
 import com.example.data.getDefaultStoryAvatar
 import com.example.data.isStoryExpired
+import com.example.data.getMixedRotatedStories
 import com.example.data.parseStoryServerTime
 import com.example.state.AppViewModel
 import com.example.state.NavRoute
@@ -136,6 +141,11 @@ import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 import java.util.regex.Pattern
+
+sealed class StoryFeedItem {
+    data class Story(val story: StoryType) : StoryFeedItem()
+    data class Ad(val adIndex: Int) : StoryFeedItem()
+}
 
 // ============================================================
 // STORY COLOR PALETTE (matching Story.tsx)
@@ -180,8 +190,18 @@ fun StoryScreen(viewModel: AppViewModel) {
         viewModel.navigateTo(NavRoute.INTELLIGENCE_FEED)
     }
 
-    val activeStories = remember(viewModel.stories) {
-        viewModel.stories.filter { !isStoryExpired(it) }
+    LaunchedEffect(Unit) {
+        viewModel.rotateStories()
+    }
+
+    val rotatedStories = remember(viewModel.stories, viewModel.currentUser?.id, viewModel.storyRotationSeed) {
+        getMixedRotatedStories(
+            stories = viewModel.stories,
+            currentUserId = viewModel.currentUser?.id,
+            pinOwnerFirst = false,
+            uniqueByAuthor = false,
+            rotationSeed = viewModel.storyRotationSeed
+        )
     }
 
     Box(
@@ -249,7 +269,7 @@ fun StoryScreen(viewModel: AppViewModel) {
 
             // STORY REEL (Horizontal Carousel) — keeps its card chrome here
             StoryReel(
-                stories = activeStories,
+                stories = viewModel.stories,
                 loading = viewModel.isStoriesLoading,
                 currentUser = viewModel.currentUser,
                 isUserVerified = { uid, u -> viewModel.isUserVerified(uid, u) },
@@ -259,11 +279,12 @@ fun StoryScreen(viewModel: AppViewModel) {
                 },
                 onViewStory = { story -> viewModel.viewingStory = story },
                 onProfileClick = { authorId ->
-                    val author = viewModel.getResolvedUser(authorId, activeStories.firstOrNull { it.userId == authorId }?.user)
+                    val author = viewModel.getResolvedUser(authorId, viewModel.stories.firstOrNull { it.userId == authorId }?.user)
                     viewModel.openUserProfile(author)
                 },
                 onRequestLogin = { viewModel.openAuth() },
-                onLoadMore = { viewModel.loadStories() }
+                onLoadMore = { viewModel.loadStories() },
+                rotationSeed = viewModel.storyRotationSeed
             )
 
             Spacer(modifier = Modifier.height(16.dp))
@@ -286,7 +307,10 @@ fun StoryScreen(viewModel: AppViewModel) {
                 )
 
                 IconButton(
-                    onClick = { viewModel.loadStories() },
+                    onClick = {
+                        viewModel.rotateStories()
+                        viewModel.loadStories()
+                    },
                     modifier = Modifier.size(32.dp)
                 ) {
                     Icon(
@@ -301,7 +325,7 @@ fun StoryScreen(viewModel: AppViewModel) {
             Spacer(modifier = Modifier.height(10.dp))
 
             // Empty state
-            if (activeStories.isEmpty() && !viewModel.isStoriesLoading) {
+            if (rotatedStories.isEmpty() && !viewModel.isStoriesLoading) {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -318,10 +342,24 @@ fun StoryScreen(viewModel: AppViewModel) {
                 }
             }
 
-            // Grid of Stories with 6-item pagination and See More button
+            // Grid of Stories with 6-item pagination, See More button, and native ad after every 3 stories
             var visibleGridCount by remember { mutableIntStateOf(6) }
-            val displayedGridStories = activeStories.take(visibleGridCount)
-            val chunkedStories = displayedGridStories.chunked(2)
+            val displayedGridStories = rotatedStories.take(visibleGridCount)
+
+            val gridFeedItems = remember(displayedGridStories) {
+                val items = mutableListOf<StoryFeedItem>()
+                var storyCount = 0
+                var adIndex = 0
+                displayedGridStories.forEach { story ->
+                    items.add(StoryFeedItem.Story(story))
+                    storyCount++
+                    if (storyCount % 3 == 0) {
+                        items.add(StoryFeedItem.Ad(adIndex++))
+                    }
+                }
+                items
+            }
+            val chunkedStories = gridFeedItems.chunked(2)
 
             Box(
                 modifier = Modifier
@@ -334,18 +372,28 @@ fun StoryScreen(viewModel: AppViewModel) {
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
-                            rowItems.forEach { story ->
+                            rowItems.forEach { item ->
                                 Box(modifier = Modifier.weight(1f)) {
-                                    StoryGridCard(
-                                        story = story,
-                                        author = viewModel.getResolvedUser(story.userId, story.user),
-                                        isVerified = viewModel.isUserVerified(story.userId, story.user),
-                                        onClick = { viewModel.viewingStory = story },
-                                        onProfileClick = {
-                                            val authorUser = viewModel.getResolvedUser(story.userId, story.user)
-                                            viewModel.openUserProfile(authorUser)
+                                    when (item) {
+                                        is StoryFeedItem.Story -> {
+                                            val story = item.story
+                                            StoryGridCard(
+                                                story = story,
+                                                author = viewModel.getResolvedUser(story.userId, story.user),
+                                                isVerified = viewModel.isUserVerified(story.userId, story.user),
+                                                onClick = { viewModel.viewingStory = story },
+                                                onProfileClick = {
+                                                    val authorUser = viewModel.getResolvedUser(story.userId, story.user)
+                                                    viewModel.openUserProfile(authorUser)
+                                                }
+                                            )
                                         }
-                                    )
+                                        is StoryFeedItem.Ad -> {
+                                            StoryGridAdCard(
+                                                adUnitId = AdConfig.getNativeAdUnitId(item.adIndex)
+                                            )
+                                        }
+                                    }
                                 }
                             }
                             if (rowItems.size == 1) {
@@ -357,7 +405,7 @@ fun StoryScreen(viewModel: AppViewModel) {
             }
 
             // "See More" button that requests/reveals 6 more stories
-            if (activeStories.size > visibleGridCount || activeStories.isNotEmpty()) {
+            if (rotatedStories.size > visibleGridCount || rotatedStories.isNotEmpty()) {
                 Spacer(modifier = Modifier.height(16.dp))
                 Box(
                     modifier = Modifier
@@ -398,12 +446,12 @@ fun StoryScreen(viewModel: AppViewModel) {
                                 )
                             }
                             Text(
-                                text = if (activeStories.size > visibleGridCount) "See More Stories (+6)" else "Load More Stories",
+                                text = if (rotatedStories.size > visibleGridCount) "See More Stories (+6)" else "Load More Stories",
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = LightBlue
                             )
-                            if (activeStories.size > visibleGridCount) {
+                            if (rotatedStories.size > visibleGridCount) {
                                 Box(
                                     modifier = Modifier
                                         .clip(CircleShape)
@@ -411,7 +459,7 @@ fun StoryScreen(viewModel: AppViewModel) {
                                         .padding(horizontal = 8.dp, vertical = 2.dp)
                                 ) {
                                     Text(
-                                        text = "${displayedGridStories.size}/${activeStories.size}",
+                                        text = "${displayedGridStories.size}/${rotatedStories.size}",
                                         fontSize = 11.sp,
                                         fontFamily = FontFamily.Monospace,
                                         color = TextSecondary
@@ -438,8 +486,32 @@ fun GlobalStoryModals(viewModel: AppViewModel) {
         viewModel.stories.filter { !isStoryExpired(it) }
     }
 
-    // STORY VIEWER MODAL
-    if (viewModel.viewingStory != null) {
+    var viewedStoryCount by remember { mutableIntStateOf(0) }
+    var pendingNextStory by remember { mutableStateOf<StoryType?>(null) }
+    var showingStoryAd by remember { mutableStateOf(false) }
+
+    // FULL SCREEN STORY AD MODAL (after every 5 stories)
+    if (showingStoryAd) {
+        FullScreenStoryAdViewer(
+            adUnitId = AdConfig.getNativeAdUnitId((viewedStoryCount / 5) % 5),
+            onClose = {
+                showingStoryAd = false
+                viewModel.viewingStory = null
+            },
+            onNext = {
+                showingStoryAd = false
+                if (pendingNextStory != null) {
+                    viewModel.viewingStory = pendingNextStory
+                    pendingNextStory = null
+                } else {
+                    viewModel.viewingStory = null
+                }
+            },
+            onPrev = {
+                showingStoryAd = false
+            }
+        )
+    } else if (viewModel.viewingStory != null) {
         val currentStory = viewModel.viewingStory!!
         val author = viewModel.getResolvedUser(currentStory.userId, currentStory.user)
         val isVerified = viewModel.isUserVerified(currentStory.userId, author)
@@ -452,7 +524,11 @@ fun GlobalStoryModals(viewModel: AppViewModel) {
             onClose = { viewModel.viewingStory = null },
             onNext = {
                 val idx = activeStories.indexOfFirst { it.id == currentStory.id }
-                if (idx >= 0 && idx + 1 < activeStories.size) {
+                viewedStoryCount++
+                if (viewedStoryCount % 5 == 0 && idx >= 0 && idx + 1 < activeStories.size) {
+                    pendingNextStory = activeStories[idx + 1]
+                    showingStoryAd = true
+                } else if (idx >= 0 && idx + 1 < activeStories.size) {
                     viewModel.viewingStory = activeStories[idx + 1]
                 } else {
                     viewModel.viewingStory = null
@@ -522,24 +598,17 @@ fun StoryReel(
     onProfileClick: (String) -> Unit,
     onRequestLogin: () -> Unit,
     flat: Boolean = false,
-    onLoadMore: (() -> Unit)? = null
+    onLoadMore: (() -> Unit)? = null,
+    rotationSeed: Long = System.currentTimeMillis()
 ) {
-    val active = remember(stories) { stories.filter { !isStoryExpired(it) } }
-
-    val uniqueUsers = remember(active, currentUser?.id) {
-        val seen = mutableSetOf<String>()
-        val out = mutableListOf<StoryType>()
-        val sorted = active.sortedByDescending { parseStoryServerTime(it.createdAt) }
-        val meId = currentUser?.id.orEmpty()
-        val mine = sorted.filter { it.userId == meId }
-        val others = sorted.filter { it.userId != meId }
-        if (mine.isNotEmpty()) out.add(mine[0])
-        for (s in others) {
-            if (seen.add(s.userId)) {
-                out.add(s)
-            }
-        }
-        out
+    val uniqueUsers = remember(stories, currentUser?.id, rotationSeed) {
+        getMixedRotatedStories(
+            stories = stories,
+            currentUserId = currentUser?.id,
+            pinOwnerFirst = true,
+            uniqueByAuthor = true,
+            rotationSeed = rotationSeed
+        )
     }
 
     var visibleLimit by remember { mutableIntStateOf(6) }
@@ -594,19 +663,28 @@ fun StoryReel(
                 )
             }
 
-            items(displayedStories, key = { it.id }) { story ->
-                val resolvedAuthor = authorProvider?.invoke(story.userId, story.user) ?: story.user
-                val isVerified = isUserVerified?.invoke(story.userId, resolvedAuthor)
-                    ?: (resolvedAuthor?.isUserVerified == true)
-                StoryReelCard(
-                    story = story,
-                    author = resolvedAuthor,
-                    currentUser = currentUser,
-                    isVerified = isVerified,
-                    onClick = { onViewStory(story) },
-                    onProfileClick = { onProfileClick(story.userId) },
-                    onAddMore = onCreateStory
-                )
+            displayedStories.forEachIndexed { index, story ->
+                item(key = story.id) {
+                    val resolvedAuthor = authorProvider?.invoke(story.userId, story.user) ?: story.user
+                    val isVerified = isUserVerified?.invoke(story.userId, resolvedAuthor)
+                        ?: (resolvedAuthor?.isUserVerified == true)
+                    StoryReelCard(
+                        story = story,
+                        author = resolvedAuthor,
+                        currentUser = currentUser,
+                        isVerified = isVerified,
+                        onClick = { onViewStory(story) },
+                        onProfileClick = { onProfileClick(story.userId) },
+                        onAddMore = onCreateStory
+                    )
+                }
+                if ((index + 1) % 5 == 0) {
+                    item(key = "story_reel_ad_${index / 5}") {
+                        StoryReelAdCard(
+                            adUnitId = AdConfig.getNativeAdUnitId(index / 5)
+                        )
+                    }
+                }
             }
 
             if (uniqueUsers.size > visibleLimit) {

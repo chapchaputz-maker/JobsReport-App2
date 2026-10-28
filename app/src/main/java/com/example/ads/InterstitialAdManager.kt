@@ -52,48 +52,8 @@ object InterstitialAdManager {
         activity: Activity,
         onProceedToApplication: () -> Unit
     ) {
-        applyActionCount++
-        val shouldShowAd = applyActionCount >= AdConfig.APPLY_ACTIONS_BEFORE_INTERSTITIAL
-
-        val currentTime = SystemClock.elapsedRealtime()
-        val isCooldownActive = (currentTime - lastAdShownTime) < AdConfig.INTERSTITIAL_COOLDOWN_MS
-        val currentAd = interstitialAd
-
-        if (!shouldShowAd || currentAd == null || !AdStateManager.canShowInterstitial() || isCooldownActive) {
-            // If ad was not loaded, kick off preload for future actions
-            if (currentAd == null) {
-                loadAd(activity)
-            }
-            onProceedToApplication()
-            return
-        }
-
-        // Reset counter when showing interstitial
-        applyActionCount = 0
-
-        currentAd.fullScreenContentCallback = object : FullScreenContentCallback() {
-            override fun onAdShowedFullScreenContent() {
-                AdStateManager.setInterstitialShowing(true)
-                lastAdShownTime = SystemClock.elapsedRealtime()
-            }
-
-            override fun onAdDismissedFullScreenContent() {
-                AdStateManager.setInterstitialShowing(false)
-                interstitialAd = null
-                loadAd(activity)
-                onProceedToApplication()
-            }
-
-            override fun onAdFailedToShowFullScreenContent(adError: AdError) {
-                Log.w(TAG, "Interstitial ad failed to show: ${adError.message}")
-                AdStateManager.setInterstitialShowing(false)
-                interstitialAd = null
-                loadAd(activity)
-                onProceedToApplication()
-            }
-        }
-
-        currentAd.show(activity)
+        // Direct execution without ad interruption as requested by user
+        onProceedToApplication()
     }
 
     fun showAdIfReady(

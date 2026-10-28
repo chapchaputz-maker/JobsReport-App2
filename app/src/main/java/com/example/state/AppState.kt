@@ -266,18 +266,26 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun openUserProfileByName(userId: String, name: String?, avatarUrl: String? = null) {
-        val resolvedName = name?.ifBlank { "Jastin Beda" } ?: "Jastin Beda"
+        val resolvedName = name?.trim()?.takeIf { it.isNotBlank() } ?: "User"
+        val resolvedId = userId.trim().takeIf { it.isNotBlank() } ?: "user_${resolvedName.lowercase().replace(" ", "_")}"
         val foundUser = stories.firstOrNull {
-            it.userId == userId || it.user?.id == userId || it.user?.name?.equals(resolvedName, ignoreCase = true) == true
+            it.userId == resolvedId || it.user?.id == resolvedId || it.user?.name?.equals(resolvedName, ignoreCase = true) == true
         }?.user
-            ?: if (currentUser?.id == userId || (currentUser?.name?.equals(resolvedName, ignoreCase = true) == true)) currentUser
+            ?: if (currentUser?.id == resolvedId || (currentUser?.name?.equals(resolvedName, ignoreCase = true) == true)) currentUser
             else StoryUser(
-                id = userId.ifBlank { "user_jastin_beda" },
+                id = resolvedId,
                 name = resolvedName,
                 username = resolvedName.lowercase().replace(" ", "_"),
-                profileImageUrl = avatarUrl?.ifBlank { null } ?: getDefaultStoryAvatar(resolvedName, userId)
+                profileImageUrl = avatarUrl?.ifBlank { null } ?: getDefaultStoryAvatar(resolvedName, resolvedId)
             )
         openUserProfile(foundUser)
+    }
+
+    var storyRotationSeed by mutableStateOf(System.currentTimeMillis())
+        private set
+
+    fun rotateStories() {
+        storyRotationSeed = System.currentTimeMillis()
     }
 
     var editingJob by mutableStateOf<JobOpportunity?>(null)
@@ -1125,6 +1133,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun navigateTo(route: NavRoute) {
         currentRoute = route
         isMobileMenuOpen = false
+        if (route == NavRoute.INTELLIGENCE_FEED || route == NavRoute.STORIES) {
+            rotateStories()
+        }
     }
 
     // ============================================================

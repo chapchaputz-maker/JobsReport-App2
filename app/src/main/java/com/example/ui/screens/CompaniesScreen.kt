@@ -58,6 +58,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import com.example.ads.AdConfig
 import com.example.ads.NativeAdCard
 import com.example.data.Company
 import com.example.data.JobOpportunity
@@ -574,8 +575,8 @@ fun CompaniesScreen(viewModel: AppViewModel) {
                     }
                 }
 
-                // Top Native Ad for Company Detail View
-                NativeAdCard()
+                // --- Native Ad 1: Top of Company Detail View (Unit 1) ---
+                NativeAdCard(adUnitId = AdConfig.getNativeAdUnitId(0))
 
                 // About Description Section
                 if (!selectedCompany.description.isNullOrBlank()) {
@@ -650,12 +651,15 @@ fun CompaniesScreen(viewModel: AppViewModel) {
                                     onClick = { viewModel.selectJob(job) }
                                 )
                                 if ((index + 1) % 3 == 0) {
-                                    NativeAdCard()
+                                    NativeAdCard(adUnitId = AdConfig.getNativeAdUnitId(index / 3 + 2))
                                 }
                             }
                         }
                     }
                 }
+
+                // --- Native Ad 2: Bottom of Company Detail View (Unit 2) ---
+                NativeAdCard(adUnitId = AdConfig.getNativeAdUnitId(1))
             }
         } else {
             // --- 4. Directory Grid View of Companies ---
@@ -680,7 +684,7 @@ fun CompaniesScreen(viewModel: AppViewModel) {
                             onClick = { viewModel.selectCompany(company) }
                         )
                         if ((index + 1) % 3 == 0) {
-                            NativeAdCard()
+                            NativeAdCard(adUnitId = AdConfig.getNativeAdUnitId((index + 1) / 3))
                         }
                     }
                 }
