@@ -1,6 +1,7 @@
 package com.example.ui.screens
 
 import android.content.Intent
+import com.example.ads.AdConfig
 import com.example.ads.NativeAdCard
 import com.example.data.resolveApplicationUrl
 import androidx.compose.foundation.Canvas
@@ -500,7 +501,10 @@ fun ReportDetailScreen(viewModel: AppViewModel) {
         }
 
         // Native Ad
-        NativeAdCard()
+        NativeAdCard(
+            adUnitId = AdConfig.getNativeAdUnitId(0),
+            slotKey = "report_detail_top_ad"
+        )
 
         // --- 6. Main Insights & Article Content ---
         Box(
@@ -710,7 +714,10 @@ fun ReportDetailScreen(viewModel: AppViewModel) {
             }
 
             // Native Ad Bottom
-            NativeAdCard()
+            NativeAdCard(
+                adUnitId = AdConfig.getNativeAdUnitId(1),
+                slotKey = "report_detail_bottom_ad"
+            )
         }
     }
 }

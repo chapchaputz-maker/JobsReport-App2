@@ -237,7 +237,10 @@ fun ReportsScreen(viewModel: AppViewModel) {
         }
 
         // --- Native Ad 1: Top of Reports (Unit 1) ---
-        NativeAdCard(adUnitId = AdConfig.getNativeAdUnitId(0))
+        NativeAdCard(
+            adUnitId = AdConfig.getNativeAdUnitId(0),
+            slotKey = "reports_top_ad"
+        )
 
         // --- 3. Filter & Search Bar ---
         Column(
@@ -410,17 +413,29 @@ fun ReportsScreen(viewModel: AppViewModel) {
                     )
                     if (index == 1) {
                         // Native Ad 2 after 2 reports
-                        NativeAdCard(adUnitId = AdConfig.getNativeAdUnitId(1))
+                        NativeAdCard(
+                            adUnitId = AdConfig.getNativeAdUnitId(1),
+                            slotKey = "reports_middle_ad_1"
+                        )
                     } else if (index == 3) {
                         // Native Ad 3 after 4 reports
-                        NativeAdCard(adUnitId = AdConfig.getNativeAdUnitId(2))
+                        NativeAdCard(
+                            adUnitId = AdConfig.getNativeAdUnitId(2),
+                            slotKey = "reports_middle_ad_2"
+                        )
                     }
                 }
                 if (filteredReports.size < 2) {
-                    NativeAdCard(adUnitId = AdConfig.getNativeAdUnitId(1))
+                    NativeAdCard(
+                        adUnitId = AdConfig.getNativeAdUnitId(1),
+                        slotKey = "reports_middle_ad_1"
+                    )
                 }
                 if (filteredReports.size < 4) {
-                    NativeAdCard(adUnitId = AdConfig.getNativeAdUnitId(2))
+                    NativeAdCard(
+                        adUnitId = AdConfig.getNativeAdUnitId(2),
+                        slotKey = "reports_middle_ad_2"
+                    )
                 }
             }
         }
@@ -558,7 +573,10 @@ fun ReportsScreen(viewModel: AppViewModel) {
         }
 
         // --- Native Ad 4: Bottom of Reports Page (Unit 4) ---
-        NativeAdCard(adUnitId = AdConfig.getNativeAdUnitId(3))
+        NativeAdCard(
+            adUnitId = AdConfig.getNativeAdUnitId(3),
+            slotKey = "reports_bottom_ad"
+        )
     }
 
     // --- Report Detail Modal Dialog ---

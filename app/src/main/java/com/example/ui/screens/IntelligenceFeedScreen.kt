@@ -384,7 +384,10 @@ fun IntelligenceFeedScreen(viewModel: AppViewModel) {
         }
 
         // --- Native Ad 1: Top Feed Placement (Unit 1) ---
-        NativeAdCard(adUnitId = AdConfig.getNativeAdUnitId(0))
+        NativeAdCard(
+            adUnitId = AdConfig.getNativeAdUnitId(0),
+            slotKey = "home_feed_ad_0"
+        )
 
         // --- 3. Job Categories Grid Section ---
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -450,7 +453,10 @@ fun IntelligenceFeedScreen(viewModel: AppViewModel) {
         }
 
         // --- Native Ad 2: After Categories Placement (Unit 2) ---
-        NativeAdCard(adUnitId = AdConfig.getNativeAdUnitId(1))
+        NativeAdCard(
+            adUnitId = AdConfig.getNativeAdUnitId(1),
+            slotKey = "home_feed_ad_1"
+        )
 
         // --- 4. Latest Opportunities (Active Jobs) ---
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -609,7 +615,10 @@ fun IntelligenceFeedScreen(viewModel: AppViewModel) {
         }
 
         // --- Native Ad 3: Middle Feed Placement (Unit 3) ---
-        NativeAdCard(adUnitId = AdConfig.getNativeAdUnitId(2))
+        NativeAdCard(
+            adUnitId = AdConfig.getNativeAdUnitId(2),
+            slotKey = "home_feed_ad_2"
+        )
 
         // --- 5. Market Intelligence Reports ---
         if (viewModel.reports.isNotEmpty()) {
@@ -752,7 +761,10 @@ fun IntelligenceFeedScreen(viewModel: AppViewModel) {
         }
 
         // --- Native Ad 4: Pre-Spotlight Placement (Unit 4) ---
-        NativeAdCard(adUnitId = AdConfig.getNativeAdUnitId(3))
+        NativeAdCard(
+            adUnitId = AdConfig.getNativeAdUnitId(3),
+            slotKey = "home_feed_ad_3"
+        )
 
         // --- 7. Weekly Spotlight Employers ---
         Box(
@@ -831,7 +843,10 @@ fun IntelligenceFeedScreen(viewModel: AppViewModel) {
         }
 
         // --- Native Ad 5: Bottom Feed Placement (Unit 5) ---
-        NativeAdCard(adUnitId = AdConfig.getNativeAdUnitId(4))
+        NativeAdCard(
+            adUnitId = AdConfig.getNativeAdUnitId(4),
+            slotKey = "home_feed_ad_4"
+        )
 
         Spacer(modifier = Modifier.height(10.dp))
     }

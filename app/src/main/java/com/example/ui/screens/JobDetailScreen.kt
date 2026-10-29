@@ -558,7 +558,10 @@ fun JobDetailScreen(viewModel: AppViewModel) {
             }
 
             // --- Native Ad 1: Before Action Bar (Unit 1) ---
-            NativeAdCard(adUnitId = AdConfig.getNativeAdUnitId(0))
+            NativeAdCard(
+                adUnitId = AdConfig.getNativeAdUnitId(0),
+                slotKey = "job_detail_ad_0"
+            )
 
             // --- 3. Action / Application Instructions Bar ---
             Box(
@@ -802,7 +805,10 @@ fun JobDetailScreen(viewModel: AppViewModel) {
             }
 
             // --- Native Ad 2: After Safety Alert Banner (Unit 2) ---
-            NativeAdCard(adUnitId = AdConfig.getNativeAdUnitId(1))
+            NativeAdCard(
+                adUnitId = AdConfig.getNativeAdUnitId(1),
+                slotKey = "job_detail_ad_1"
+            )
 
             // --- 5. Attachments Section (if available) ---
             if (attachments.isNotEmpty()) {
@@ -1000,7 +1006,10 @@ fun JobDetailScreen(viewModel: AppViewModel) {
             }
 
             // --- Native Ad 3: After Job Specifications (Unit 3) ---
-            NativeAdCard(adUnitId = AdConfig.getNativeAdUnitId(2))
+            NativeAdCard(
+                adUnitId = AdConfig.getNativeAdUnitId(2),
+                slotKey = "job_detail_ad_2"
+            )
 
             // --- 8. About Company & Related Jobs ---
             Box(
@@ -1068,7 +1077,10 @@ fun JobDetailScreen(viewModel: AppViewModel) {
             }
 
             // --- Native Ad 4: Before Related Jobs (Unit 4) ---
-            NativeAdCard(adUnitId = AdConfig.getNativeAdUnitId(3))
+            NativeAdCard(
+                adUnitId = AdConfig.getNativeAdUnitId(3),
+                slotKey = "job_detail_ad_3"
+            )
 
             if (relatedJobs.isNotEmpty()) {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -1162,7 +1174,10 @@ fun JobDetailScreen(viewModel: AppViewModel) {
             }
 
             // --- Native Ad 5: End of Page (Unit 5) ---
-            NativeAdCard(adUnitId = AdConfig.getNativeAdUnitId(4))
+            NativeAdCard(
+                adUnitId = AdConfig.getNativeAdUnitId(4),
+                slotKey = "job_detail_ad_4"
+            )
 
             Spacer(modifier = Modifier.height(16.dp))
         }

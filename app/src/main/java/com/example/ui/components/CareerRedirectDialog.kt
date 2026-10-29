@@ -345,7 +345,10 @@ fun CareerRedirectDialog(
                         .fillMaxWidth()
                         .padding(vertical = 6.dp)
                 ) {
-                    NativeAdCard(adUnitId = AdConfig.PROD_NATIVE_UNIT_1)
+                    NativeAdCard(
+                        adUnitId = AdConfig.PROD_NATIVE_UNIT_1,
+                        slotKey = "career_redirect_native_ad"
+                    )
                 }
 
                 Spacer(modifier = Modifier.height(10.dp))
