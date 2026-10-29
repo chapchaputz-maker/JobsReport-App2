@@ -30,8 +30,18 @@ android {
         storePassword = System.getenv("STORE_PASSWORD") ?: "52775277Tanzania"
         keyAlias = System.getenv("KEY_ALIAS") ?: "upload"
         keyPassword = System.getenv("KEY_PASSWORD") ?: "52775277Tanzania"
+      } else if (file("${rootDir}/upload-key.jks").exists()) {
+        storeFile = file("${rootDir}/upload-key.jks")
+        storePassword = System.getenv("STORE_PASSWORD") ?: "52775277Tanzania"
+        keyAlias = System.getenv("KEY_ALIAS") ?: "upload"
+        keyPassword = System.getenv("KEY_PASSWORD") ?: "52775277Tanzania"
       } else if (file("${rootDir}/my-upload-key.jks").exists()) {
         storeFile = file("${rootDir}/my-upload-key.jks")
+        storePassword = System.getenv("STORE_PASSWORD") ?: "52775277Tanzania"
+        keyAlias = System.getenv("KEY_ALIAS") ?: "upload"
+        keyPassword = System.getenv("KEY_PASSWORD") ?: "52775277Tanzania"
+      } else if (file("${rootDir}/release.keystore").exists()) {
+        storeFile = file("${rootDir}/release.keystore")
         storePassword = System.getenv("STORE_PASSWORD") ?: "52775277Tanzania"
         keyAlias = System.getenv("KEY_ALIAS") ?: "upload"
         keyPassword = System.getenv("KEY_PASSWORD") ?: "52775277Tanzania"

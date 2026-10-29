@@ -1,7 +1,4 @@
-
-
-
-name: Build & Sign Android App (AAB & APK)
+name: Build & Sign Android App (AAB, APK & Upload Keys)
 
 on:
   push:
@@ -11,7 +8,7 @@ on:
 
 jobs:
   build:
-    name: Build & Sign Release AAB and APK
+    name: Build, Sign & Export Release Artifacts
     runs-on: ubuntu-latest
 
     steps:
@@ -32,8 +29,8 @@ jobs:
           echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> $GITHUB_ENV
           echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> $GITHUB_PATH
           echo "$ANDROID_HOME/platform-tools" >> $GITHUB_PATH
+          echo "$ANDROID_HOME/build-tools/36.0.0" >> $GITHUB_PATH
           mkdir -p "$ANDROID_HOME/licenses"
-          # Pre-populate all Android SDK license hashes to eliminate interactive prompts
           printf "%s\n" \
             "24333f8a63b6825ea9c5514f83c2829b004d1fee" \
             "d56f5187479451eabf01fb78af6dfcb131a6481e" \
@@ -44,32 +41,45 @@ jobs:
           printf "%s\n" "859f317696f67ef3d7f30a50a5560e7834b43903" >> "$ANDROID_HOME/licenses/android-sdk-arm-dbt-license"
           printf "%s\n" "33b6a2b64607f11b759f320ef9dff4ae5c47d97a" >> "$ANDROID_HOME/licenses/google-gdk-license"
           printf "%s\n" "e9acab5b5fbb560a72cfaecce8946896ff6aab9d" >> "$ANDROID_HOME/licenses/mips-android-sysimage-license"
-          # Ensure all licenses are confirmed non-interactively
           if [ -f "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" ]; then
             yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses 2>/dev/null || true
           elif which sdkmanager > /dev/null 2>&1; then
             yes | sdkmanager --licenses 2>/dev/null || true
           fi
+
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: 9.3.1
           validate-wrappers: false
 
-      - name: Setup Keystore for Signing
+      - name: Resolve, Generate, or Reuse Upload Keystore
         id: setup-keystore
         run: |
-          if [ -n "${{ secrets.KEYSTORE_BASE64 }}" ]; then
-            echo "Using base64 keystore from GitHub Secrets..."
-            echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > release.keystore
-            echo "KEYSTORE_PATH=$GITHUB_WORKSPACE/release.keystore" >> $GITHUB_ENV
+          KEY_SOURCE="generated"
+          if [ -n "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" ]; then
+            echo "Using base64 keystore from secrets.RELEASE_KEYSTORE_BASE64..."
+            echo "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" | base64 --decode > upload-key.jks
+            KEY_SOURCE="secrets.RELEASE_KEYSTORE_BASE64"
+          elif [ -n "${{ secrets.KEYSTORE_BASE64 }}" ]; then
+            echo "Using base64 keystore from secrets.KEYSTORE_BASE64..."
+            echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > upload-key.jks
+            KEY_SOURCE="secrets.KEYSTORE_BASE64"
+          elif [ -f "upload-key.jks" ]; then
+            echo "Using existing upload-key.jks in repository root..."
+            KEY_SOURCE="repository file (upload-key.jks)"
           elif [ -f "my-upload-key.jks" ]; then
-            echo "Using my-upload-key.jks from repository..."
-            echo "KEYSTORE_PATH=$GITHUB_WORKSPACE/my-upload-key.jks" >> $GITHUB_ENV
+            echo "Using existing my-upload-key.jks from repository..."
+            cp my-upload-key.jks upload-key.jks
+            KEY_SOURCE="repository file (my-upload-key.jks)"
+          elif [ -f "release.keystore" ]; then
+            echo "Using existing release.keystore from repository..."
+            cp release.keystore upload-key.jks
+            KEY_SOURCE="repository file (release.keystore)"
           else
-            echo "Generating production release keystore with alias upload..."
+            echo "No existing keystore secret or file found. Generating new upload keystore..."
             keytool -genkeypair -v \
-              -keystore release.keystore \
+              -keystore upload-key.jks \
               -alias "${KEY_ALIAS}" \
               -keyalg RSA \
               -keysize 2048 \
@@ -77,38 +87,211 @@ jobs:
               -storepass "${STORE_PASSWORD}" \
               -keypass "${KEY_PASSWORD}" \
               -dname "CN=JobsReport, OU=App, O=JobsReport, L=Dar es Salaam, ST=Dar es Salaam, C=TZ"
-            echo "KEYSTORE_PATH=$GITHUB_WORKSPACE/release.keystore" >> $GITHUB_ENV
+            KEY_SOURCE="newly generated (SAVE THIS KEY!)"
           fi
+
+          # Ensure the file exists and is non-empty
+          if [ ! -s "upload-key.jks" ]; then
+            echo "::error::Failed to obtain or generate upload-key.jks!"
+            exit 1
+          fi
+
+          # Export public certificate in RFC 7468 PEM format
+          echo "Exporting public certificate to upload_certificate.pem..."
+          keytool -export -rfc \
+            -keystore upload-key.jks \
+            -alias "${KEY_ALIAS}" \
+            -file upload_certificate.pem \
+            -storepass "${STORE_PASSWORD}"
+
+          if [ ! -s "upload_certificate.pem" ]; then
+            echo "::error::Failed to export upload_certificate.pem!"
+            exit 1
+          fi
+
+          echo "KEYSTORE_PATH=$GITHUB_WORKSPACE/upload-key.jks" >> $GITHUB_ENV
+          echo "KEY_SOURCE=$KEY_SOURCE" >> $GITHUB_ENV
+          echo "keystore_source=$KEY_SOURCE" >> $GITHUB_OUTPUT
         env:
           KEY_ALIAS: ${{ secrets.KEY_ALIAS || 'upload' }}
           STORE_PASSWORD: ${{ secrets.STORE_PASSWORD || secrets.KEYSTORE_PASSWORD || '52775277Tanzania' }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD || '52775277Tanzania' }}
 
-      - name: Build Release Bundle (AAB), Release APK & Debug APK
-        run: gradle bundleRelease assembleRelease assembleDebug --stacktrace
+      - name: Verify Certificate Fingerprints & Keystore Pair
+        id: verify-certs
+        run: |
+          echo "=========================================================="
+          echo "VERIFYING KEYSTORE & PEM CERTIFICATE PAIR"
+          echo "=========================================================="
+          
+          # Extract fingerprints from keystore
+          KEYSTORE_LIST=$(keytool -list -v -keystore upload-key.jks -alias "${KEY_ALIAS}" -storepass "${STORE_PASSWORD}")
+          KEYSTORE_SHA1=$(echo "$KEYSTORE_LIST" | grep -i "SHA1:" | head -n1 | sed -e 's/.*SHA1: //I' | tr -d ' ')
+          KEYSTORE_SHA256=$(echo "$KEYSTORE_LIST" | grep -i "SHA256:" | head -n1 | sed -e 's/.*SHA256: //I' | tr -d ' ')
+
+          # Extract fingerprints from exported PEM
+          PEM_LIST=$(keytool -printcert -file upload_certificate.pem)
+          PEM_SHA1=$(echo "$PEM_LIST" | grep -i "SHA1:" | head -n1 | sed -e 's/.*SHA1: //I' | tr -d ' ')
+          PEM_SHA256=$(echo "$PEM_LIST" | grep -i "SHA256:" | head -n1 | sed -e 's/.*SHA256: //I' | tr -d ' ')
+
+          echo "Keystore SHA1:   $KEYSTORE_SHA1"
+          echo "Keystore SHA256: $KEYSTORE_SHA256"
+          echo "PEM File SHA1:   $PEM_SHA1"
+          echo "PEM File SHA256: $PEM_SHA256"
+
+          if [ "$KEYSTORE_SHA1" != "$PEM_SHA1" ] || [ -z "$KEYSTORE_SHA1" ]; then
+            echo "::error::Mismatch between upload-key.jks and upload_certificate.pem!"
+            exit 1
+          fi
+          echo "Keystore and PEM fingerprints match perfectly!"
+
+          echo "KEYSTORE_SHA1=$KEYSTORE_SHA1" >> $GITHUB_ENV
+          echo "KEYSTORE_SHA256=$KEYSTORE_SHA256" >> $GITHUB_ENV
+        env:
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS || 'upload' }}
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD || secrets.KEYSTORE_PASSWORD || '52775277Tanzania' }}
+
+      - name: Build Signed Release AAB & Release APK
+        run: |
+          echo "Building bundleRelease and assembleRelease..."
+          gradle bundleRelease assembleRelease --stacktrace
         env:
           KEYSTORE_PATH: ${{ env.KEYSTORE_PATH }}
           STORE_PASSWORD: ${{ secrets.STORE_PASSWORD || secrets.KEYSTORE_PASSWORD || '52775277Tanzania' }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS || 'upload' }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD || '52775277Tanzania' }}
 
-      - name: Upload Signed Play Store Bundle (.AAB)
-        uses: actions/upload-artifact@v4
-        with:
-          name: app-release-aab
-          path: app/build/outputs/bundle/release/app-release.aab
-          if-no-files-found: error
+      - name: Collect & Validate Built Artifacts
+        id: validate-artifacts
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/artifacts"
 
-      - name: Upload Signed Release APK
+          # 1. Release APK
+          APK_SRC="app/build/outputs/apk/release/app-release.apk"
+          if [ ! -s "$APK_SRC" ]; then
+            echo "::error::Release APK was not generated at $APK_SRC"
+            exit 1
+          fi
+          cp "$APK_SRC" "$GITHUB_WORKSPACE/app-release.apk"
+          cp "$APK_SRC" "$GITHUB_WORKSPACE/artifacts/app-release.apk"
+
+          # 2. Release AAB
+          AAB_SRC="app/build/outputs/bundle/release/app-release.aab"
+          if [ ! -s "$AAB_SRC" ]; then
+            echo "::error::Release AAB was not generated at $AAB_SRC"
+            exit 1
+          fi
+          cp "$AAB_SRC" "$GITHUB_WORKSPACE/app-release.aab"
+          cp "$AAB_SRC" "$GITHUB_WORKSPACE/artifacts/app-release.aab"
+
+          # 3. Java Keystore
+          cp "$GITHUB_WORKSPACE/upload-key.jks" "$GITHUB_WORKSPACE/artifacts/upload-key.jks"
+
+          # 4. PEM Upload Certificate
+          cp "$GITHUB_WORKSPACE/upload_certificate.pem" "$GITHUB_WORKSPACE/artifacts/upload_certificate.pem"
+
+          # Inspect signatures of APK and AAB
+          echo "Verifying APK signature..."
+          APK_CERT_INFO=$(keytool -printcert -jarfile "$GITHUB_WORKSPACE/app-release.apk" 2>&1 || true)
+          APK_SHA1=$(echo "$APK_CERT_INFO" | grep -i "SHA1:" | head -n1 | sed -e 's/.*SHA1: //I' | tr -d ' ')
+          APK_SHA256=$(echo "$APK_CERT_INFO" | grep -i "SHA256:" | head -n1 | sed -e 's/.*SHA256: //I' | tr -d ' ')
+
+          echo "Verifying AAB signature..."
+          AAB_CERT_INFO=$(keytool -printcert -jarfile "$GITHUB_WORKSPACE/app-release.aab" 2>&1 || true)
+          AAB_SHA1=$(echo "$AAB_CERT_INFO" | grep -i "SHA1:" | head -n1 | sed -e 's/.*SHA1: //I' | tr -d ' ')
+          AAB_SHA256=$(echo "$AAB_CERT_INFO" | grep -i "SHA256:" | head -n1 | sed -e 's/.*SHA256: //I' | tr -d ' ')
+
+          echo "APK SHA1: $APK_SHA1"
+          echo "AAB SHA1: $AAB_SHA1"
+
+          # Base64 string for easy storage in GitHub Secrets
+          KEYSTORE_B64=$(base64 -w 0 "$GITHUB_WORKSPACE/upload-key.jks")
+
+          # Write summary to GitHub Step Summary
+          cat <<EOF > "$GITHUB_STEP_SUMMARY"
+          # Android Release Build & Signing Summary
+
+          ### 📦 Application Details
+          - **Application ID:** \`co.jobsreport.ap\`
+          - **Keystore Alias:** \`${{ secrets.KEY_ALIAS || 'upload' }}\`
+          - **Keystore Source:** \`${{ env.KEY_SOURCE }}\`
+
+          ---
+
+          ### 🔑 Key & Certificate Fingerprints
+          | Component | SHA-1 Fingerprint | SHA-256 Fingerprint |
+          | :--- | :--- | :--- |
+          | **Keystore (\`upload-key.jks\`)** | \`$KEYSTORE_SHA1\` | \`$KEYSTORE_SHA256\` |
+          | **PEM Certificate (\`upload_certificate.pem\`)** | \`$KEYSTORE_SHA1\` | \`$KEYSTORE_SHA256\` |
+          | **Signed Release APK** | \`$APK_SHA1\` | \`$APK_SHA256\` |
+          | **Signed Release AAB** | \`$AAB_SHA1\` | \`$AAB_SHA256\` |
+
+          ---
+
+          ### 🛡️ Understanding Your Keys (Critical for Google Play)
+          1. **Google Play App Signing Key:** The certificate stored on Google's servers that signs the final APK delivered to users' devices. Google Play expected fingerprint: \`CD:9B:F7:69:CF:05:8A:FC:64:38:B0:D6:A1:B3:FD:84:42:06:9F:46\`.
+          2. **Upload Key (\`upload-key.jks\` / \`upload_certificate.pem\`):** The key used to sign your App Bundle before uploading to Google Play Console. Fingerprint: \`$KEYSTORE_SHA1\`.
+          3. **Debug Key:** Internal developer key (\`debug.keystore\`) used only for local debugging.
+
+          ---
+
+          ### 📲 Google Play Upload-Key Reset Instructions
+          If Google Play reported that your App Bundle is signed with the wrong key, follow these steps:
+          1. Download the **\`upload_certificate.pem\`** artifact below.
+          2. Open **Google Play Console** on your phone or computer.
+          3. Navigate to: **Test and release** > **Setup** > **App integrity** > **App Signing**.
+          4. Tap **Request upload key reset**.
+          5. Choose reason: *"I lost my upload key"* or *"Upload key reset"*.
+          6. Upload the downloaded **\`upload_certificate.pem\`** file.
+          7. Once Google Play approves your request (typically within 24-48 hours), your new upload key will become active, and Google Play will accept your new **\`app-release.aab\`**!
+
+          ---
+
+          ### ⚠️ CRITICAL: Save Your Keystore for Future Releases
+          GitHub Actions runners are temporary machines destroyed after each run.
+          To ensure you never lose this keystore:
+          1. Download the **\`upload-key.jks\`** artifact.
+          2. In your GitHub repository, go to **Settings** > **Secrets and variables** > **Actions**.
+          3. Add a new repository secret:
+             - Name: \`KEYSTORE_BASE64\`
+             - Value: Copy the Base64 representation of \`upload-key.jks\`.
+          EOF
+
+      # ----------------------------------------------------------------------
+      # 4 Required Downloadable Artifacts for Phone/Direct Download
+      # ----------------------------------------------------------------------
+      - name: Export 1. Release APK (app-release.apk)
         uses: actions/upload-artifact@v4
         with:
           name: app-release-apk
-          path: app/build/outputs/apk/release/app-release.apk
-          if-no-files-found: warn
+          path: app-release.apk
+          if-no-files-found: error
 
-      - name: Upload Debug APK
+      - name: Export 2. Release App Bundle (app-release.aab)
         uses: actions/upload-artifact@v4
         with:
-          name: app-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
-          if-no-files-found: warn
+          name: app-release-aab
+          path: app-release.aab
+          if-no-files-found: error
+
+      - name: Export 3. Java Keystore (upload-key.jks)
+        uses: actions/upload-artifact@v4
+        with:
+          name: upload-key-jks
+          path: upload-key.jks
+          if-no-files-found: error
+
+      - name: Export 4. PEM Upload Certificate (upload_certificate.pem)
+        uses: actions/upload-artifact@v4
+        with:
+          name: upload-certificate-pem
+          path: upload_certificate.pem
+          if-no-files-found: error
+
+      # Convenient all-in-one zip package for single-tap download on mobile phone
+      - name: Export All-In-One Bundle (All 4 Files)
+        uses: actions/upload-artifact@v4
+        with:
+          name: all-release-files-and-keys
+          path: artifacts/
+          if-no-files-found: error
