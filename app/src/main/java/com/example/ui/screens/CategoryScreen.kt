@@ -241,7 +241,10 @@ fun CategoryScreen(viewModel: AppViewModel) {
                         onClick = { viewModel.selectJob(job) }
                     )
                     if ((index + 1) % 3 == 0) {
-                        NativeAdCard(adUnitId = AdConfig.getNativeAdUnitId((index + 1) / 3))
+                        NativeAdCard(
+                            adUnitId = AdConfig.getNativeAdUnitId((index + 1) / 3),
+                            slotKey = "category_jobs_ad_$index"
+                        )
                     }
                 }
             }

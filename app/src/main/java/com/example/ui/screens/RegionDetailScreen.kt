@@ -345,7 +345,10 @@ fun RegionDetailScreen(viewModel: AppViewModel) {
                         onClick = { viewModel.selectJob(job) }
                     )
                     if ((index + 1) % 2 == 0) {
-                        NativeAdCard(adUnitId = AdConfig.getNativeAdUnitId((index + 1) / 2))
+                        NativeAdCard(
+                            adUnitId = AdConfig.getNativeAdUnitId((index + 1) / 2),
+                            slotKey = "region_detail_job_ad_$index"
+                        )
                     }
                 }
             }

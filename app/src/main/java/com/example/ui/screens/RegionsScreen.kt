@@ -433,7 +433,10 @@ fun RegionsScreen(viewModel: AppViewModel) {
                     }
                     if ((index + 1) % 4 == 0) {
                         item(key = "country_region_ad_${countryName}_$index") {
-                            NativeAdCard(adUnitId = AdConfig.getNativeAdUnitId((index + 1) / 4))
+                            NativeAdCard(
+                                adUnitId = AdConfig.getNativeAdUnitId((index + 1) / 4),
+                                slotKey = "regions_country_ad_${countryName}_$index"
+                            )
                         }
                     }
                 }
@@ -451,7 +454,10 @@ fun RegionsScreen(viewModel: AppViewModel) {
                 }
                 if ((index + 1) % 4 == 0) {
                     item(key = "active_region_ad_$index") {
-                        NativeAdCard(adUnitId = AdConfig.getNativeAdUnitId((index + 1) / 4))
+                        NativeAdCard(
+                            adUnitId = AdConfig.getNativeAdUnitId((index + 1) / 4),
+                            slotKey = "regions_active_ad_$index"
+                        )
                     }
                 }
             }

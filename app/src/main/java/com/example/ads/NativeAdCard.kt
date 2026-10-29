@@ -49,45 +49,37 @@ import com.google.android.gms.ads.nativead.NativeAdView
 @Composable
 fun NativeAdCard(
     modifier: Modifier = Modifier,
-    adUnitId: String = AdConfig.nativeAdUnitId
+    adUnitId: String = AdConfig.nativeAdUnitId,
+    slotKey: String = adUnitId
 ) {
-    val context = LocalContext.current
-    var nativeAd by remember { mutableStateOf<NativeAd?>(null) }
-    var isFailedToLoad by remember { mutableStateOf(false) }
+    val context = LocalContext.current.applicationContext
+    var nativeAd by remember(slotKey) {
+        mutableStateOf(NativeAdManager.getCachedAd(slotKey))
+    }
+    var isFailedToLoad by remember(slotKey) { mutableStateOf(false) }
 
-    LaunchedEffect(adUnitId) {
-        val adLoader = AdLoader.Builder(context, adUnitId)
-            .forNativeAd { ad ->
-                nativeAd?.destroy()
-                nativeAd = ad
-                isFailedToLoad = false
-            }
-            .withAdListener(object : AdListener() {
-                override fun onAdFailedToLoad(error: LoadAdError) {
+    LaunchedEffect(slotKey, adUnitId) {
+        val cached = NativeAdManager.getCachedAd(slotKey)
+        if (cached != null) {
+            nativeAd = cached
+            isFailedToLoad = false
+        } else {
+            NativeAdManager.loadAdForSlot(
+                context = context,
+                slotKey = slotKey,
+                adUnitId = adUnitId,
+                onAdReady = { ad ->
+                    nativeAd = ad
+                    isFailedToLoad = false
+                },
+                onAdFailed = {
                     isFailedToLoad = true
                 }
-            })
-            .withNativeAdOptions(
-                NativeAdOptions.Builder()
-                    .setAdChoicesPlacement(NativeAdOptions.ADCHOICES_TOP_RIGHT)
-                    .build()
             )
-            .build()
-
-        adLoader.loadAd(AdRequest.Builder().build())
-    }
-
-    DisposableEffect(Unit) {
-        onDispose {
-            nativeAd?.destroy()
         }
     }
 
-    AnimatedVisibility(
-        visible = nativeAd != null && !isFailedToLoad,
-        enter = fadeIn(),
-        exit = fadeOut()
-    ) {
+    if (nativeAd != null && !isFailedToLoad) {
         Box(
             modifier = modifier
                 .fillMaxWidth()
@@ -105,7 +97,8 @@ fun NativeAdCard(
                 },
                 update = { nativeAdView ->
                     val ad = nativeAd
-                    if (ad != null) {
+                    if (ad != null && nativeAdView.tag !== ad) {
+                        nativeAdView.tag = ad
                         populateNativeAdView(ad, nativeAdView)
                     }
                 }
@@ -314,7 +307,7 @@ private fun populateNativeAdView(nativeAd: NativeAd, nativeAdView: NativeAdView)
 
     // Media View
     val mediaContent = nativeAd.mediaContent
-    if (mediaContent != null && mediaContent.hasVideoContent()) {
+    if (mediaContent != null) {
         nativeAdView.mediaView?.visibility = View.VISIBLE
         nativeAdView.mediaView?.mediaContent = mediaContent
     } else {

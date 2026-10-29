@@ -87,36 +87,33 @@ private fun dpToPx(context: Context, dp: Int): Int {
 @Composable
 fun StoryReelAdCard(
     modifier: Modifier = Modifier,
-    adUnitId: String = AdConfig.getNativeAdUnitId(0)
+    adUnitId: String = AdConfig.getNativeAdUnitId(0),
+    slotKey: String = "story_reel_$adUnitId"
 ) {
-    val context = LocalContext.current
-    var nativeAd by remember(adUnitId) { mutableStateOf<NativeAd?>(null) }
-    var isFailed by remember(adUnitId) { mutableStateOf(false) }
+    val context = LocalContext.current.applicationContext
+    var nativeAd by remember(slotKey) {
+        mutableStateOf(NativeAdManager.getCachedAd(slotKey))
+    }
+    var isFailed by remember(slotKey) { mutableStateOf(false) }
 
-    LaunchedEffect(adUnitId) {
-        val loader = AdLoader.Builder(context, adUnitId)
-            .forNativeAd { ad ->
-                nativeAd?.destroy()
-                nativeAd = ad
-                isFailed = false
-            }
-            .withAdListener(object : AdListener() {
-                override fun onAdFailedToLoad(error: LoadAdError) {
+    LaunchedEffect(slotKey, adUnitId) {
+        val cached = NativeAdManager.getCachedAd(slotKey)
+        if (cached != null) {
+            nativeAd = cached
+            isFailed = false
+        } else {
+            NativeAdManager.loadAdForSlot(
+                context = context,
+                slotKey = slotKey,
+                adUnitId = adUnitId,
+                onAdReady = { ad ->
+                    nativeAd = ad
+                    isFailed = false
+                },
+                onAdFailed = {
                     isFailed = true
                 }
-            })
-            .withNativeAdOptions(
-                NativeAdOptions.Builder()
-                    .setAdChoicesPlacement(NativeAdOptions.ADCHOICES_TOP_RIGHT)
-                    .build()
             )
-            .build()
-        loader.loadAd(AdRequest.Builder().build())
-    }
-
-    DisposableEffect(adUnitId) {
-        onDispose {
-            nativeAd?.destroy()
         }
     }
 
@@ -136,7 +133,8 @@ fun StoryReelAdCard(
                 },
                 update = { view ->
                     val ad = nativeAd
-                    if (ad != null) {
+                    if (ad != null && view.tag !== ad) {
+                        view.tag = ad
                         populateReelNativeAdView(ad, view)
                     }
                 }
@@ -153,36 +151,74 @@ private fun createReelNativeAdView(context: Context): NativeAdView {
         )
     }
 
-    val root = LinearLayout(context).apply {
-        orientation = LinearLayout.VERTICAL
-        gravity = Gravity.CENTER_HORIZONTAL
-        setPadding(dpToPx(context, 8), dpToPx(context, 8), dpToPx(context, 8), dpToPx(context, 8))
-        layoutParams = LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT,
-            LinearLayout.LayoutParams.MATCH_PARENT
+    val root = FrameLayout(context).apply {
+        layoutParams = FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.MATCH_PARENT
         )
     }
 
-    // Top Row: Sponsored Badge & Avatar Icon
+    // 1. Full-bleed MediaView Background
+    val mediaView = MediaView(context).apply {
+        id = View.generateViewId()
+        layoutParams = FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.MATCH_PARENT
+        )
+        val bgDrawable = android.graphics.drawable.GradientDrawable().apply {
+            colors = intArrayOf(
+                AndroidColor.parseColor("#1E1B4B"),
+                AndroidColor.parseColor("#0F172A"),
+                AndroidColor.parseColor("#020617")
+            )
+            orientation = android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM
+        }
+        background = bgDrawable
+    }
+    root.addView(mediaView)
+    nativeAdView.mediaView = mediaView
+
+    // 2. Story Vertical Gradient Scrim (identical to StoryReelCard)
+    val scrimView = View(context).apply {
+        layoutParams = FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.MATCH_PARENT
+        )
+        val scrimDrawable = android.graphics.drawable.GradientDrawable().apply {
+            colors = intArrayOf(
+                AndroidColor.parseColor("#66000000"), // 40% black at top
+                AndroidColor.parseColor("#1A000000"), // 10% black in middle
+                AndroidColor.parseColor("#E6000000")  // 90% dark black at bottom
+            )
+            orientation = android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM
+        }
+        background = scrimDrawable
+    }
+    root.addView(scrimView)
+
+    // 3. Top Row: Avatar icon + "Sponsored" badge
     val topRow = LinearLayout(context).apply {
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
-        layoutParams = LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT,
-            LinearLayout.LayoutParams.WRAP_CONTENT
+        val lp = FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.WRAP_CONTENT
         ).apply {
-            bottomMargin = dpToPx(context, 6)
+            gravity = Gravity.TOP
+            setMargins(dpToPx(context, 8), dpToPx(context, 8), dpToPx(context, 8), 0)
         }
+        layoutParams = lp
     }
 
     val iconView = ImageView(context).apply {
         id = View.generateViewId()
-        layoutParams = LinearLayout.LayoutParams(dpToPx(context, 26), dpToPx(context, 26)).apply {
+        layoutParams = LinearLayout.LayoutParams(dpToPx(context, 28), dpToPx(context, 28)).apply {
             rightMargin = dpToPx(context, 6)
         }
         val bgDrawable = android.graphics.drawable.GradientDrawable().apply {
-            setColor(AndroidColor.parseColor("#1877F2"))
+            setColor(AndroidColor.parseColor("#2563EB"))
             shape = android.graphics.drawable.GradientDrawable.OVAL
+            setStroke(dpToPx(context, 1), AndroidColor.parseColor("#38BDF8"))
         }
         background = bgDrawable
         clipToOutline = true
@@ -192,63 +228,55 @@ private fun createReelNativeAdView(context: Context): NativeAdView {
     nativeAdView.iconView = iconView
 
     val badge = TextView(context).apply {
-        text = "Ad"
+        text = "Sponsored"
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 8f)
         setTextColor(AndroidColor.parseColor("#38BDF8"))
         typeface = Typeface.MONOSPACE
         paint.isFakeBoldText = true
         val bgDrawable = android.graphics.drawable.GradientDrawable().apply {
-            setColor(AndroidColor.parseColor("#15233D"))
-            cornerRadius = dpToPx(context, 3).toFloat()
-            setStroke(dpToPx(context, 1), AndroidColor.parseColor("#3338BDF8"))
+            setColor(AndroidColor.parseColor("#800B1120"))
+            cornerRadius = dpToPx(context, 4).toFloat()
+            setStroke(dpToPx(context, 1), AndroidColor.parseColor("#4D38BDF8"))
         }
         background = bgDrawable
-        setPadding(dpToPx(context, 4), dpToPx(context, 1), dpToPx(context, 4), dpToPx(context, 1))
+        setPadding(dpToPx(context, 5), dpToPx(context, 2), dpToPx(context, 5), dpToPx(context, 2))
     }
     topRow.addView(badge)
     root.addView(topRow)
 
-    // Headline Text
+    // 4. Bottom Content: Headline + CTA Button
+    val bottomLayout = LinearLayout(context).apply {
+        orientation = LinearLayout.VERTICAL
+        gravity = Gravity.CENTER_HORIZONTAL
+        val lp = FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.WRAP_CONTENT
+        ).apply {
+            gravity = Gravity.BOTTOM
+            setMargins(dpToPx(context, 8), 0, dpToPx(context, 8), dpToPx(context, 10))
+        }
+        layoutParams = lp
+    }
+
     val headlineView = TextView(context).apply {
         id = View.generateViewId()
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
         setTextColor(AndroidColor.WHITE)
         typeface = Typeface.DEFAULT_BOLD
         paint.isFakeBoldText = true
-        maxLines = 3
+        maxLines = 2
         ellipsize = TextUtils.TruncateAt.END
-        gravity = Gravity.CENTER
+        gravity = Gravity.START
         layoutParams = LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT,
-            0,
-            1f
+            LinearLayout.LayoutParams.WRAP_CONTENT
         ).apply {
             bottomMargin = dpToPx(context, 6)
         }
     }
-    root.addView(headlineView)
+    bottomLayout.addView(headlineView)
     nativeAdView.headlineView = headlineView
 
-    // Media View
-    val mediaView = MediaView(context).apply {
-        id = View.generateViewId()
-        layoutParams = LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT,
-            dpToPx(context, 68)
-        ).apply {
-            bottomMargin = dpToPx(context, 8)
-        }
-        clipToOutline = true
-        val bgDrawable = android.graphics.drawable.GradientDrawable().apply {
-            setColor(AndroidColor.parseColor("#0F172A"))
-            cornerRadius = dpToPx(context, 8).toFloat()
-        }
-        background = bgDrawable
-    }
-    root.addView(mediaView)
-    nativeAdView.mediaView = mediaView
-
-    // CTA Button
     val ctaButton = Button(context).apply {
         id = View.generateViewId()
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 9f)
@@ -256,19 +284,20 @@ private fun createReelNativeAdView(context: Context): NativeAdView {
         typeface = Typeface.DEFAULT_BOLD
         isAllCaps = true
         val bgDrawable = android.graphics.drawable.GradientDrawable().apply {
-            setColor(AndroidColor.parseColor("#1877F2"))
-            cornerRadius = dpToPx(context, 8).toFloat()
+            setColor(AndroidColor.parseColor("#2563EB")) // PrimaryBlue
+            cornerRadius = dpToPx(context, 10).toFloat()
         }
         background = bgDrawable
         layoutParams = LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT,
-            dpToPx(context, 26)
+            dpToPx(context, 28)
         )
         setPadding(0, 0, 0, 0)
     }
-    root.addView(ctaButton)
+    bottomLayout.addView(ctaButton)
     nativeAdView.callToActionView = ctaButton
 
+    root.addView(bottomLayout)
     nativeAdView.addView(root)
     return nativeAdView
 }
@@ -289,7 +318,7 @@ private fun populateReelNativeAdView(ad: NativeAd, view: NativeAdView) {
         mediaView?.mediaContent = ad.mediaContent
         mediaView?.visibility = View.VISIBLE
     } else {
-        mediaView?.visibility = View.GONE
+        mediaView?.visibility = View.VISIBLE
     }
 
     val cta = view.callToActionView as? Button
@@ -311,36 +340,33 @@ private fun populateReelNativeAdView(ad: NativeAd, view: NativeAdView) {
 @Composable
 fun StoryGridAdCard(
     modifier: Modifier = Modifier,
-    adUnitId: String = AdConfig.getNativeAdUnitId(1)
+    adUnitId: String = AdConfig.getNativeAdUnitId(1),
+    slotKey: String = "story_grid_$adUnitId"
 ) {
-    val context = LocalContext.current
-    var nativeAd by remember(adUnitId) { mutableStateOf<NativeAd?>(null) }
-    var isFailed by remember(adUnitId) { mutableStateOf(false) }
+    val context = LocalContext.current.applicationContext
+    var nativeAd by remember(slotKey) {
+        mutableStateOf(NativeAdManager.getCachedAd(slotKey))
+    }
+    var isFailed by remember(slotKey) { mutableStateOf(false) }
 
-    LaunchedEffect(adUnitId) {
-        val loader = AdLoader.Builder(context, adUnitId)
-            .forNativeAd { ad ->
-                nativeAd?.destroy()
-                nativeAd = ad
-                isFailed = false
-            }
-            .withAdListener(object : AdListener() {
-                override fun onAdFailedToLoad(error: LoadAdError) {
+    LaunchedEffect(slotKey, adUnitId) {
+        val cached = NativeAdManager.getCachedAd(slotKey)
+        if (cached != null) {
+            nativeAd = cached
+            isFailed = false
+        } else {
+            NativeAdManager.loadAdForSlot(
+                context = context,
+                slotKey = slotKey,
+                adUnitId = adUnitId,
+                onAdReady = { ad ->
+                    nativeAd = ad
+                    isFailed = false
+                },
+                onAdFailed = {
                     isFailed = true
                 }
-            })
-            .withNativeAdOptions(
-                NativeAdOptions.Builder()
-                    .setAdChoicesPlacement(NativeAdOptions.ADCHOICES_TOP_RIGHT)
-                    .build()
             )
-            .build()
-        loader.loadAd(AdRequest.Builder().build())
-    }
-
-    DisposableEffect(adUnitId) {
-        onDispose {
-            nativeAd?.destroy()
         }
     }
 
@@ -360,7 +386,8 @@ fun StoryGridAdCard(
                 },
                 update = { view ->
                     val ad = nativeAd
-                    if (ad != null) {
+                    if (ad != null && view.tag !== ad) {
+                        view.tag = ad
                         populateGridNativeAdView(ad, view)
                     }
                 }
@@ -550,42 +577,39 @@ private fun populateGridNativeAdView(ad: NativeAd, view: NativeAdView) {
 @Composable
 fun FullScreenStoryAdViewer(
     adUnitId: String = AdConfig.getNativeAdUnitId(2),
+    slotKey: String = "fullscreen_story_ad",
     onClose: () -> Unit,
     onNext: () -> Unit,
     onPrev: () -> Unit
 ) {
-    val context = LocalContext.current
-    var nativeAd by remember(adUnitId) { mutableStateOf<NativeAd?>(null) }
-    var isFailed by remember(adUnitId) { mutableStateOf(false) }
+    val context = LocalContext.current.applicationContext
+    var nativeAd by remember(slotKey) {
+        mutableStateOf(NativeAdManager.getCachedAd(slotKey))
+    }
+    var isFailed by remember(slotKey) { mutableStateOf(false) }
     var progress by remember { mutableFloatStateOf(0f) }
     var isPaused by remember { mutableStateOf(false) }
 
-    LaunchedEffect(adUnitId) {
-        val loader = AdLoader.Builder(context, adUnitId)
-            .forNativeAd { ad ->
-                nativeAd?.destroy()
-                nativeAd = ad
-                isFailed = false
-            }
-            .withAdListener(object : AdListener() {
-                override fun onAdFailedToLoad(error: LoadAdError) {
+    LaunchedEffect(slotKey, adUnitId) {
+        val cached = NativeAdManager.getCachedAd(slotKey)
+        if (cached != null) {
+            nativeAd = cached
+            isFailed = false
+        } else {
+            NativeAdManager.loadAdForSlot(
+                context = context,
+                slotKey = slotKey,
+                adUnitId = adUnitId,
+                onAdReady = { ad ->
+                    nativeAd = ad
+                    isFailed = false
+                },
+                onAdFailed = {
                     isFailed = true
                     // If ad failed, automatically advance to next story
                     onNext()
                 }
-            })
-            .withNativeAdOptions(
-                NativeAdOptions.Builder()
-                    .setAdChoicesPlacement(NativeAdOptions.ADCHOICES_TOP_RIGHT)
-                    .build()
             )
-            .build()
-        loader.loadAd(AdRequest.Builder().build())
-    }
-
-    DisposableEffect(adUnitId) {
-        onDispose {
-            nativeAd?.destroy()
         }
     }
 
@@ -653,7 +677,8 @@ fun FullScreenStoryAdViewer(
                         },
                         update = { view ->
                             val ad = nativeAd
-                            if (ad != null) {
+                            if (ad != null && view.tag !== ad) {
+                                view.tag = ad
                                 populateFullScreenNativeAdView(ad, view)
                             }
                         }

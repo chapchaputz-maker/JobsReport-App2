@@ -390,7 +390,8 @@ fun StoryScreen(viewModel: AppViewModel) {
                                         }
                                         is StoryFeedItem.Ad -> {
                                             StoryGridAdCard(
-                                                adUnitId = AdConfig.getNativeAdUnitId(item.adIndex)
+                                                adUnitId = AdConfig.getNativeAdUnitId(item.adIndex),
+                                                slotKey = "all_stories_grid_${item.adIndex}"
                                             )
                                         }
                                     }
@@ -494,6 +495,7 @@ fun GlobalStoryModals(viewModel: AppViewModel) {
     if (showingStoryAd) {
         FullScreenStoryAdViewer(
             adUnitId = AdConfig.getNativeAdUnitId((viewedStoryCount / 5) % 5),
+            slotKey = "fullscreen_story_ad_${(viewedStoryCount / 5) % 5}",
             onClose = {
                 showingStoryAd = false
                 viewModel.viewingStory = null
@@ -678,12 +680,24 @@ fun StoryReel(
                         onAddMore = onCreateStory
                     )
                 }
-                if ((index + 1) % 5 == 0) {
-                    item(key = "story_reel_ad_${index / 5}") {
+                // Story position 3 is an ad (shown after the second story)
+                if (index == 1) {
+                    item(key = "home_story_reel_ad_pos3") {
                         StoryReelAdCard(
-                            adUnitId = AdConfig.getNativeAdUnitId(index / 5)
+                            adUnitId = AdConfig.PROD_NATIVE_UNIT_1,
+                            slotKey = "home_story_reel_pos3"
                         )
                     }
+                }
+            }
+
+            // Fallback: If fewer than 2 stories exist, ensure the position 3 ad is still rendered
+            if (displayedStories.size < 2) {
+                item(key = "home_story_reel_ad_pos3_fallback") {
+                    StoryReelAdCard(
+                        adUnitId = AdConfig.PROD_NATIVE_UNIT_1,
+                        slotKey = "home_story_reel_pos3"
+                    )
                 }
             }
 

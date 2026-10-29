@@ -922,7 +922,10 @@ fun UserProfilePage(
                                 }
                                 if ((index + 1) % 5 == 0) {
                                     item(key = "user_job_ad_$index") {
-                                        NativeAdCard(adUnitId = AdConfig.getNativeAdUnitId((index + 1) / 5))
+                                        NativeAdCard(
+                                            adUnitId = AdConfig.getNativeAdUnitId((index + 1) / 5),
+                                            slotKey = "profile_job_ad_$index"
+                                        )
                                     }
                                 }
                             }
@@ -1011,7 +1014,8 @@ fun UserProfilePage(
                                                         }
                                                         is ProfileStoryFeedItem.Ad -> {
                                                             StoryGridAdCard(
-                                                                adUnitId = AdConfig.getNativeAdUnitId(item.adIndex)
+                                                                adUnitId = AdConfig.getNativeAdUnitId(item.adIndex),
+                                                                slotKey = "profile_story_grid_${item.adIndex}"
                                                             )
                                                         }
                                                     }

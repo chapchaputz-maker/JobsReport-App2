@@ -577,7 +577,10 @@ fun CompaniesScreen(viewModel: AppViewModel) {
                 }
 
                 // --- Native Ad 1: Top of Company Detail View (Unit 1) ---
-                NativeAdCard(adUnitId = AdConfig.getNativeAdUnitId(0))
+                NativeAdCard(
+                    adUnitId = AdConfig.getNativeAdUnitId(0),
+                    slotKey = "company_detail_top_ad"
+                )
 
                 // About Description Section
                 if (!selectedCompany.description.isNullOrBlank()) {
@@ -684,7 +687,10 @@ fun CompaniesScreen(viewModel: AppViewModel) {
                                     onClick = { viewModel.selectJob(job) }
                                 )
                                 if ((index + 1) % 3 == 0) {
-                                    NativeAdCard(adUnitId = AdConfig.getNativeAdUnitId(index / 3 + 2))
+                                    NativeAdCard(
+                                        adUnitId = AdConfig.getNativeAdUnitId(index / 3 + 2),
+                                        slotKey = "company_job_ad_$index"
+                                    )
                                 }
                             }
                         }
@@ -701,7 +707,10 @@ fun CompaniesScreen(viewModel: AppViewModel) {
                 }
 
                 // --- Native Ad 2: Bottom of Company Detail View (Unit 2) ---
-                NativeAdCard(adUnitId = AdConfig.getNativeAdUnitId(1))
+                NativeAdCard(
+                    adUnitId = AdConfig.getNativeAdUnitId(1),
+                    slotKey = "company_detail_bottom_ad"
+                )
             }
         } else {
             // --- 4. Directory Grid View of Companies ---
@@ -726,7 +735,10 @@ fun CompaniesScreen(viewModel: AppViewModel) {
                             onClick = { viewModel.selectCompany(company) }
                         )
                         if ((index + 1) % 3 == 0) {
-                            NativeAdCard(adUnitId = AdConfig.getNativeAdUnitId((index + 1) / 3))
+                            NativeAdCard(
+                                adUnitId = AdConfig.getNativeAdUnitId((index + 1) / 3),
+                                slotKey = "company_dir_ad_$index"
+                            )
                         }
                     }
                 }
