@@ -1,10 +1,13 @@
 package com.example.ui.screens
 
+import android.app.Activity
 import android.app.DatePickerDialog
 import android.content.Context
+import android.content.ContextWrapper
 import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
+import com.example.ads.RewardedAdManager
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -192,6 +195,14 @@ fun StoryScreen(viewModel: AppViewModel) {
 
     LaunchedEffect(Unit) {
         viewModel.rotateStories()
+    }
+
+    LaunchedEffect(viewModel.storyDetailError) {
+        val err = viewModel.storyDetailError
+        if (!err.isNullOrBlank()) {
+            Toast.makeText(context, err, Toast.LENGTH_LONG).show()
+            viewModel.storyDetailError = null
+        }
     }
 
     val rotatedStories = remember(viewModel.stories, viewModel.currentUser?.id, viewModel.storyRotationSeed) {
@@ -476,6 +487,108 @@ fun StoryScreen(viewModel: AppViewModel) {
 }
 
 // ============================================================
+private fun Context.findActivity(): Activity? {
+    var ctx = this
+    while (ctx is ContextWrapper) {
+        if (ctx is Activity) return ctx
+        ctx = ctx.baseContext
+    }
+    return null
+}
+
+@Composable
+fun StoryRewardGateDialog(
+    onWatchAd: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth(0.9f)
+                .clip(RoundedCornerShape(24.dp))
+                .background(Color(0xFF0F172A))
+                .border(1.dp, Color(0xFF1E293B), RoundedCornerShape(24.dp))
+                .padding(24.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                // Reward Icon Header
+                Box(
+                    modifier = Modifier
+                        .size(60.dp)
+                        .clip(CircleShape)
+                        .background(
+                            Brush.linearGradient(
+                                listOf(Color(0xFFF59E0B), Color(0xFFD97706))
+                            )
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "🎁",
+                        fontSize = 28.sp
+                    )
+                }
+
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text(
+                        text = "Unlock More Stories",
+                        color = Color.White,
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Bold,
+                        textAlign = TextAlign.Center
+                    )
+                    Text(
+                        text = "You've viewed 3 stories! Watch a short sponsor video to unlock and enjoy more community stories.",
+                        color = Color(0xFF94A3B8),
+                        fontSize = 13.sp,
+                        textAlign = TextAlign.Center,
+                        lineHeight = 18.sp
+                    )
+                }
+
+                Button(
+                    onClick = onWatchAd,
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1877F2)),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp)
+                ) {
+                    Text(
+                        text = "WATCH VIDEO TO UNLOCK",
+                        color = Color.White,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace,
+                        letterSpacing = 0.5.sp
+                    )
+                }
+
+                Text(
+                    text = "Close and Exit Stories",
+                    color = Color(0xFF64748B),
+                    fontSize = 12.sp,
+                    fontFamily = FontFamily.Monospace,
+                    modifier = Modifier
+                        .clickable { onDismiss() }
+                        .padding(vertical = 4.dp)
+                )
+            }
+        }
+    }
+}
+
+// ============================================================
 // GLOBAL STORY MODALS & OVERLAYS
 // ============================================================
 @Composable
@@ -489,28 +602,87 @@ fun GlobalStoryModals(viewModel: AppViewModel) {
 
     var viewedStoryCount by remember { mutableIntStateOf(0) }
     var pendingNextStory by remember { mutableStateOf<StoryType?>(null) }
-    var showingStoryAd by remember { mutableStateOf(false) }
+    var showingRewardGate by remember { mutableStateOf(false) }
 
-    // FULL SCREEN STORY AD MODAL (after every 5 stories)
-    if (showingStoryAd) {
-        FullScreenStoryAdViewer(
-            adUnitId = AdConfig.getNativeAdUnitId((viewedStoryCount / 5) % 5),
-            slotKey = "fullscreen_story_ad_${(viewedStoryCount / 5) % 5}",
-            onClose = {
-                showingStoryAd = false
-                viewModel.viewingStory = null
-            },
-            onNext = {
-                showingStoryAd = false
-                if (pendingNextStory != null) {
-                    viewModel.viewingStory = pendingNextStory
-                    pendingNextStory = null
+    // Preload rewarded ad so it is ready when user reaches 3 stories
+    LaunchedEffect(Unit) {
+        RewardedAdManager.loadAd(context)
+    }
+
+    // Loading dialog when fetching single story from deep link
+    if (viewModel.isStoryDetailLoading && viewModel.viewingStory == null) {
+        Dialog(
+            onDismissRequest = { viewModel.isStoryDetailLoading = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false)
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.85f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    CircularProgressIndicator(
+                        color = StoryPrimaryBlue,
+                        modifier = Modifier.size(48.dp)
+                    )
+                    Text(
+                        text = "Loading Story...",
+                        color = Color.White,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "Retrieving verified community job story.",
+                        color = Color.LightGray,
+                        fontSize = 13.sp
+                    )
+                }
+            }
+        }
+    }
+
+    // REWARD GATE MODAL (Triggered when user views 3 stories)
+    if (showingRewardGate) {
+        StoryRewardGateDialog(
+            onWatchAd = {
+                val activity = context.findActivity()
+                if (activity != null) {
+                    RewardedAdManager.showRewardedAd(
+                        activity = activity,
+                        onUserEarnedReward = {
+                            viewedStoryCount = 0
+                            showingRewardGate = false
+                            if (pendingNextStory != null) {
+                                viewModel.viewingStory = pendingNextStory
+                                pendingNextStory = null
+                            }
+                        },
+                        onAdDismissed = {
+                            if (showingRewardGate && pendingNextStory != null) {
+                                viewedStoryCount = 0
+                                showingRewardGate = false
+                                viewModel.viewingStory = pendingNextStory
+                                pendingNextStory = null
+                            }
+                        }
+                    )
                 } else {
-                    viewModel.viewingStory = null
+                    viewedStoryCount = 0
+                    showingRewardGate = false
+                    if (pendingNextStory != null) {
+                        viewModel.viewingStory = pendingNextStory
+                        pendingNextStory = null
+                    }
                 }
             },
-            onPrev = {
-                showingStoryAd = false
+            onDismiss = {
+                showingRewardGate = false
+                pendingNextStory = null
+                viewModel.viewingStory = null
             }
         )
     } else if (viewModel.viewingStory != null) {
@@ -527,9 +699,9 @@ fun GlobalStoryModals(viewModel: AppViewModel) {
             onNext = {
                 val idx = activeStories.indexOfFirst { it.id == currentStory.id }
                 viewedStoryCount++
-                if (viewedStoryCount % 5 == 0 && idx >= 0 && idx + 1 < activeStories.size) {
+                if (viewedStoryCount >= 3 && idx >= 0 && idx + 1 < activeStories.size) {
                     pendingNextStory = activeStories[idx + 1]
-                    showingStoryAd = true
+                    showingRewardGate = true
                 } else if (idx >= 0 && idx + 1 < activeStories.size) {
                     viewModel.viewingStory = activeStories[idx + 1]
                 } else {

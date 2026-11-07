@@ -55,7 +55,7 @@ class DeepLinkHandlerTest {
         assertTrue(regionTarget is DeepLinkTarget.RegionDetail)
         assertEquals("dar-es-salaam", (regionTarget as DeepLinkTarget.RegionDetail).region)
 
-        // Market /market/{slug}
+        // Market /market/{slug} for a report
         val marketTarget = DeepLinkHandler.parseUri(Uri.parse("https://jobsreport.online/market/q3-report"))
         assertTrue(marketTarget is DeepLinkTarget.ReportDetail)
         assertEquals("q3-report", (marketTarget as DeepLinkTarget.ReportDetail).reportSlug)
@@ -71,6 +71,40 @@ class DeepLinkHandlerTest {
         // Unknown route falls back to Home
         val unknownTarget = DeepLinkHandler.parseUri(Uri.parse("https://jobsreport.online/unmapped-path-12345"))
         assertEquals(DeepLinkTarget.Home, unknownTarget)
+    }
+
+    @Test
+    fun testJobDeepLink_accountantJobMarketUrl() {
+        val uri = Uri.parse("https://jobsreport.online/market/accountant-job-mw61pjcs3qji")
+        val target = DeepLinkHandler.parseUri(uri)
+
+        // Must parse to JobDetail and preserve exact identifier
+        assertTrue("Expected DeepLinkTarget.JobDetail", target is DeepLinkTarget.JobDetail)
+        val jobDetail = target as DeepLinkTarget.JobDetail
+        assertEquals("accountant-job-mw61pjcs3qji", jobDetail.jobId)
+
+        // Applying target routes to JobDetail screen
+        val app = ApplicationProvider.getApplicationContext<android.app.Application>()
+        val vm = AppViewModel(app)
+        DeepLinkHandler.applyTarget(jobDetail, vm)
+        assertEquals(NavRoute.JOB_DETAIL, vm.currentRoute)
+    }
+
+    @Test
+    fun testStoryDeepLink_storyImageSpecificUrl() {
+        val uri = Uri.parse("https://jobsreport.online/story/story-image-mw62de")
+        val target = DeepLinkHandler.parseUri(uri)
+
+        // Must parse to StoryDetail with exact story slug
+        assertTrue("Expected DeepLinkTarget.StoryDetail", target is DeepLinkTarget.StoryDetail)
+        val storyDetail = target as DeepLinkTarget.StoryDetail
+        assertEquals("story-image-mw62de", storyDetail.storySlug)
+
+        // Applying target initiates navigation to STORIES
+        val app = ApplicationProvider.getApplicationContext<android.app.Application>()
+        val vm = AppViewModel(app)
+        DeepLinkHandler.applyTarget(storyDetail, vm)
+        assertEquals(NavRoute.STORIES, vm.currentRoute)
     }
 
     @Test

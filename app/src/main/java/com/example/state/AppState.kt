@@ -18,6 +18,7 @@ import com.example.data.JobCategory
 import com.example.data.JobOpportunity
 import com.example.data.LocationInfo
 import com.example.data.MarketReport
+import com.example.data.generateShareUrl
 import com.example.data.NotificationItem
 import com.example.data.defaultCountriesList
 import com.example.data.sampleCompanies
@@ -108,9 +109,16 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val storyListAdapter = moshi.adapter<List<StoryType>>(storyListType)
     private val storiesResponseAdapter = moshi.adapter(StoriesResponse::class.java)
     private val uploadResponseAdapter = moshi.adapter(UploadResponse::class.java)
+    private val jobOpportunityAdapter = moshi.adapter(JobOpportunity::class.java)
+    private val storyTypeAdapter = moshi.adapter(StoryType::class.java)
 
     var currentRoute by mutableStateOf(NavRoute.INTELLIGENCE_FEED)
     var selectedJob by mutableStateOf<JobOpportunity?>(null)
+    var isJobDetailLoading by mutableStateOf(false)
+    var jobDetailError by mutableStateOf<String?>(null)
+    var isStoryDetailLoading by mutableStateOf(false)
+    var storyDetailError by mutableStateOf<String?>(null)
+    var pendingDeepLinkTarget by mutableStateOf<com.example.ui.deeplink.DeepLinkTarget?>(null)
 
     // Story & Community Intel State (exact parity with Story.tsx)
     var stories by mutableStateOf<List<StoryType>>(emptyList())
@@ -370,7 +378,229 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun selectJob(job: JobOpportunity) {
         selectedJob = job
+        isJobDetailLoading = false
+        jobDetailError = null
         currentRoute = NavRoute.JOB_DETAIL
+    }
+
+    /**
+     * Resolves and opens a Job from a deep link, notification, or slug/ID.
+     * Extracts candidate IDs, checks memory caches, fetches from network if needed,
+     * populates selectedJob with complete record, and sets currentRoute to JOB_DETAIL.
+     */
+    fun openJobBySlugOrId(identifier: String) {
+        val clean = identifier.trim()
+        if (clean.isBlank()) {
+            navigateTo(NavRoute.ALL_JOBS)
+            return
+        }
+
+        currentRoute = NavRoute.JOB_DETAIL
+        jobDetailError = null
+
+        // Generate candidate IDs:
+        // e.g. "accountant-job-mw61pjcs3qji"
+        // 1. "job-mw61pjcs3qji" (from -job-)
+        // 2. "accountant-job-mw61pjcs3qji" (exact input)
+        // 3. "job-" + clean
+        // 4. "mw61pjcs3qji" (raw suffix)
+        val candidateIds = linkedSetOf<String>()
+        if (clean.contains("-job-")) {
+            candidateIds.add("job-" + clean.substringAfterLast("-job-"))
+        }
+        if (clean.startsWith("job-")) {
+            candidateIds.add(clean)
+        } else {
+            candidateIds.add("job-$clean")
+        }
+        candidateIds.add(clean)
+        if (clean.contains("-job-")) {
+            candidateIds.add(clean.substringAfterLast("-job-"))
+        }
+
+        // 1. Check in-memory caches
+        val cached = activeJobs.find { job ->
+            candidateIds.any { cid -> job.id.equals(cid, ignoreCase = true) } ||
+            clean.contains(job.id, ignoreCase = true) ||
+            job.id.contains(clean, ignoreCase = true) ||
+            job.generateShareUrl().endsWith(clean, ignoreCase = true)
+        } ?: savedJobs.find { job ->
+            candidateIds.any { cid -> job.id.equals(cid, ignoreCase = true) }
+        } ?: categoryJobs.find { job ->
+            candidateIds.any { cid -> job.id.equals(cid, ignoreCase = true) }
+        } ?: selectedCompanyJobs.find { job ->
+            candidateIds.any { cid -> job.id.equals(cid, ignoreCase = true) }
+        }
+
+        if (cached != null && !cached.description.isNullOrBlank()) {
+            selectedJob = cached
+            isJobDetailLoading = false
+            return
+        }
+
+        if (cached != null) {
+            selectedJob = cached
+        } else if (selectedJob != null && (selectedJob?.id == clean || candidateIds.any { selectedJob?.id == it })) {
+            // Keep currently selected job
+        } else {
+            selectedJob = null
+        }
+
+        isJobDetailLoading = true
+
+        viewModelScope.launch {
+            try {
+                var fetched: JobOpportunity? = null
+                withContext(Dispatchers.IO) {
+                    // Try fetching single job by candidate IDs
+                    for (cid in candidateIds) {
+                        val resp = runCatching { api.getJobDetail(cid) }.getOrNull()
+                            ?: runCatching { api.getJobDetailAlternate(cid) }.getOrNull()
+                        if (resp != null) {
+                            val str = resp.string().trim()
+                            if (str.startsWith("{")) {
+                                val parsed = runCatching { jobOpportunityAdapter.fromJson(str) }.getOrNull()
+                                if (parsed != null && parsed.title.isNotBlank()) {
+                                    fetched = parsed
+                                    break
+                                }
+                            }
+                        }
+                    }
+
+                    // Fallback to searching live market feed jobs
+                    if (fetched == null) {
+                        val marketResp = runCatching { api.getMarketData(100) }.getOrNull()
+                        val liveJobs = marketResp?.activeJobs ?: marketResp?.jobs
+                        if (!liveJobs.isNullOrEmpty()) {
+                            withContext(Dispatchers.Main) {
+                                activeJobs = liveJobs
+                            }
+                            fetched = liveJobs.find { job ->
+                                candidateIds.any { cid -> job.id.equals(cid, ignoreCase = true) } ||
+                                clean.contains(job.id, ignoreCase = true) ||
+                                job.id.contains(clean, ignoreCase = true) ||
+                                job.generateShareUrl().endsWith(clean, ignoreCase = true)
+                            }
+                        }
+                    }
+                }
+
+                if (fetched != null) {
+                    selectedJob = fetched
+                    if (activeJobs.none { it.id == fetched!!.id }) {
+                        activeJobs = listOf(fetched!!) + activeJobs
+                    }
+                    jobDetailError = null
+                } else {
+                    if (selectedJob == null) {
+                        jobDetailError = "Job Opportunity Not Found. This listing may have been removed or expired."
+                    }
+                }
+            } catch (e: Exception) {
+                if (selectedJob == null) {
+                    jobDetailError = e.message ?: "Failed to load job details."
+                }
+            } finally {
+                isJobDetailLoading = false
+            }
+        }
+    }
+
+    /**
+     * Resolves and opens a Job Story from a deep link or slug.
+     * Finds or fetches the exact story, sets viewingStory, navigates to STORIES,
+     * and ensures activeStories has stories so next/previous viewing works.
+     */
+    fun openStoryBySlugOrId(slugOrId: String) {
+        val clean = slugOrId.trim()
+        if (clean.isBlank()) {
+            navigateTo(NavRoute.STORIES)
+            return
+        }
+
+        currentRoute = NavRoute.STORIES
+        storyDetailError = null
+
+        // 1. Check in-memory stories
+        val cached = stories.find {
+            it.slug.equals(clean, ignoreCase = true) ||
+            it.id.equals(clean, ignoreCase = true) ||
+            (it.slug.isNotBlank() && clean.endsWith(it.slug, ignoreCase = true))
+        }
+
+        if (cached != null) {
+            viewingStory = cached
+            if (stories.size <= 1) {
+                loadStories()
+            }
+            return
+        }
+
+        val initialStory = StoryType(
+            id = clean,
+            userId = "user_community",
+            slug = clean,
+            textContent = null,
+            createdAt = "",
+            expiresAt = ""
+        )
+        viewingStory = initialStory
+        if (stories.none { it.id == clean || it.slug == clean }) {
+            stories = listOf(initialStory) + stories
+        }
+
+        isStoryDetailLoading = true
+        viewModelScope.launch {
+            try {
+                var fetched: StoryType? = null
+                withContext(Dispatchers.IO) {
+                    val resp = runCatching { api.getStoryDetail(clean) }.getOrNull()
+                    if (resp != null) {
+                        val str = resp.string().trim()
+                        if (str.startsWith("{")) {
+                            fetched = runCatching { storyTypeAdapter.fromJson(str) }.getOrNull()
+                        }
+                    }
+
+                    // Also fetch live stories list in background to populate next/prev
+                    val allStoriesResp = runCatching { api.getStoriesRaw() }.getOrNull()
+                    if (allStoriesResp != null) {
+                        val allStr = allStoriesResp.string().trim()
+                        val parsed = parseStories(allStr)
+                        if (!parsed.isNullOrEmpty()) {
+                            val active = parsed.filter { !isStoryExpired(it) }
+                            withContext(Dispatchers.Main) {
+                                stories = active
+                            }
+                            if (fetched == null) {
+                                fetched = active.find {
+                                    it.slug.equals(clean, ignoreCase = true) ||
+                                    it.id.equals(clean, ignoreCase = true) ||
+                                    (it.slug.isNotBlank() && clean.endsWith(it.slug, ignoreCase = true))
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (fetched != null) {
+                    if (stories.none { it.id == fetched!!.id }) {
+                        stories = listOf(fetched!!) + stories
+                    }
+                    viewingStory = fetched
+                    navigateTo(NavRoute.STORIES)
+                } else {
+                    storyDetailError = "Story not found or has expired."
+                    navigateTo(NavRoute.STORIES)
+                }
+            } catch (e: Exception) {
+                storyDetailError = e.message ?: "Failed to load story."
+                navigateTo(NavRoute.STORIES)
+            } finally {
+                isStoryDetailLoading = false
+            }
+        }
     }
 
     // Country state
@@ -982,6 +1212,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun openStoryFromNotification(notification: AppNotification) {
         val storyId = notification.entityId
+            ?: extractParamFromLink(notification.link, "slug")
             ?: extractParamFromLink(notification.link, "id")
             ?: extractParamFromLink(notification.link, "storyId")
             ?: extractLastPathSegment(notification.link, listOf("stories", "story"))
@@ -990,7 +1221,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
         // 1. Try to find the story in the existing stories list
         val existingStory = if (!storyId.isNullOrBlank()) {
-            stories.find { it.id == storyId }
+            stories.find { it.id == storyId || it.slug == storyId }
         } else null ?: if (!actorId.isNullOrBlank()) {
             stories.find { it.userId == actorId }
         } else null
@@ -1034,7 +1265,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val jobId = notification.entityId
             ?: extractParamFromLink(notification.link, "id")
             ?: extractParamFromLink(notification.link, "jobId")
-            ?: extractLastPathSegment(notification.link, listOf("jobs", "job", "job-detail", "careerredirect"))
+            ?: extractLastPathSegment(notification.link, listOf("jobs", "job", "job-detail", "careerredirect", "market"))
 
         // 1. Check if job is already cached
         val existingJob = if (!jobId.isNullOrBlank()) {
@@ -1047,7 +1278,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         if (existingJob != null) {
             selectJob(existingJob)
         } else {
-            // 2. Build JobOpportunity from notification details and select it
             val (actorName, displayTitle) = formatNotificationDisplay(notification, getUserNameById(notification.actorId))
             val companyName = actorName.ifBlank { "JobsReport" }
 
@@ -1077,7 +1307,15 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 postedAt = formatNotificationRelativeTime(notification.createdAt),
                 location = "East Africa & Remote"
             )
+            if (activeJobs.none { it.id == fallbackJob.id }) {
+                activeJobs = listOf(fallbackJob) + activeJobs
+            }
             selectJob(fallbackJob)
+
+            // If a valid server jobId was provided, also sync full details in background
+            if (!jobId.isNullOrBlank()) {
+                openJobBySlugOrId(jobId)
+            }
         }
     }
 
@@ -1481,6 +1719,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             .putInt("user_stories_count", updated.storiesCount ?: 0)
             .putInt("user_job_adverts", updated.jobAdvertsCount ?: 0)
             .apply()
+
+        val pending = pendingDeepLinkTarget
+        if (pending != null) {
+            pendingDeepLinkTarget = null
+            com.example.ui.deeplink.DeepLinkHandler.applyTarget(pending, this)
+        }
     }
 
     // ═══ FIX B — fetchUserProfile: use safeStr() on every text field.
@@ -1699,6 +1943,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun closeAuth() {
         isUserAuthModalOpen = false
+        val pending = pendingDeepLinkTarget
+        if (pending != null) {
+            pendingDeepLinkTarget = null
+            com.example.ui.deeplink.DeepLinkHandler.applyTarget(pending, this)
+        }
     }
 
     fun logout() {

@@ -24,6 +24,12 @@ class JobsReportApp : Application() {
         appOpenAdManager = AppOpenAdManager(this)
         appOpenAdManager.loadAd(this)
         InterstitialAdManager.loadAd(this)
+
+        // Preload Rewarded Ad for story viewer unlocks
+        com.example.ads.RewardedAdManager.loadAd(this)
+
+        // Prewarm core native ad slots for immediate appearance in JobDetail, Home feed, and CareerRedirect
+        com.example.ads.NativeAdManager.prewarmCoreSlots(this)
     }
 
     companion object {

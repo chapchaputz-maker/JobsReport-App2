@@ -49,6 +49,12 @@ interface JobsReportApi {
     @GET("api/company-jobs/{id}")
     suspend fun getCompanyJobs(@Path("id") companyId: String): List<JobOpportunity>
 
+    @GET("api/job/{id}")
+    suspend fun getJobDetail(@Path("id") id: String): ResponseBody
+
+    @GET("api/jobs/{id}")
+    suspend fun getJobDetailAlternate(@Path("id") id: String): ResponseBody
+
     @GET("api/category-jobs")
     suspend fun getCategoryJobs(@Query("category") category: String): CategoryJobsResponse
 

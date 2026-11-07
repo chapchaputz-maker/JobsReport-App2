@@ -61,6 +61,7 @@ import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.Work
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
@@ -116,8 +117,45 @@ fun JobDetailScreen(viewModel: AppViewModel) {
     val context = LocalContext.current
     val job = viewModel.selectedJob
 
+    val isLoading = viewModel.isJobDetailLoading
+
+    // Show loading state while data is being fetched or when description is not ready yet
+    if (isLoading && (job == null || job.description.isNullOrBlank())) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(BgDeep)
+                .padding(24.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                CircularProgressIndicator(
+                    color = PrimaryBlue,
+                    modifier = Modifier.size(48.dp)
+                )
+                Text(
+                    text = "Loading Job Details...",
+                    color = TextPrimary,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = "Retrieving verified opportunity specifications and employer details.",
+                    color = TextSecondary,
+                    fontSize = 13.sp,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                )
+            }
+        }
+        return
+    }
+
     // Fallback if no job selected
     if (job == null) {
+        val errorMessage = viewModel.jobDetailError ?: "This listing may have been removed or expired. Browse active market signals."
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -142,9 +180,10 @@ fun JobDetailScreen(viewModel: AppViewModel) {
                     fontWeight = FontWeight.Bold
                 )
                 Text(
-                    text = "This listing may have been removed or expired. Browse active market signals.",
+                    text = errorMessage,
                     color = TextSecondary,
-                    fontSize = 12.sp
+                    fontSize = 12.sp,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
                 )
                 Button(
                     onClick = { viewModel.navigateTo(NavRoute.ALL_JOBS) },

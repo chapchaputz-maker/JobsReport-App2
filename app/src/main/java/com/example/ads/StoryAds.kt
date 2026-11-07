@@ -111,7 +111,9 @@ fun StoryReelAdCard(
                     isFailed = false
                 },
                 onAdFailed = {
-                    isFailed = true
+                    if (nativeAd == null) {
+                        isFailed = true
+                    }
                 }
             )
         }
@@ -364,7 +366,9 @@ fun StoryGridAdCard(
                     isFailed = false
                 },
                 onAdFailed = {
-                    isFailed = true
+                    if (nativeAd == null) {
+                        isFailed = true
+                    }
                 }
             )
         }
@@ -551,8 +555,10 @@ private fun populateGridNativeAdView(ad: NativeAd, view: NativeAdView) {
     }
 
     val mediaView = view.mediaView as? MediaView
-    if (ad.mediaContent != null) {
-        mediaView?.mediaContent = ad.mediaContent
+    val mediaContent = ad.mediaContent
+    val hasMedia = mediaContent != null && (mediaContent.hasVideoContent() || mediaContent.aspectRatio > 0.1f || ad.images.isNotEmpty())
+    if (hasMedia) {
+        mediaView?.mediaContent = mediaContent
         mediaView?.visibility = View.VISIBLE
     } else {
         mediaView?.visibility = View.GONE

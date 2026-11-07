@@ -9,7 +9,6 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
-import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -18,32 +17,44 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentHeight
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.example.ui.theme.BgCard
+import com.example.ui.theme.BgDeep
 import com.example.ui.theme.BorderWhite10
-import com.google.android.gms.ads.AdListener
-import com.google.android.gms.ads.AdLoader
-import com.google.android.gms.ads.AdRequest
-import com.google.android.gms.ads.LoadAdError
+import com.example.ui.theme.BorderWhite5
+import com.example.ui.theme.LightBlue
+import com.example.ui.theme.TextMuted
 import com.google.android.gms.ads.nativead.MediaView
 import com.google.android.gms.ads.nativead.NativeAd
-import com.google.android.gms.ads.nativead.NativeAdOptions
 import com.google.android.gms.ads.nativead.NativeAdView
 
 @Composable
@@ -73,13 +84,16 @@ fun NativeAdCard(
                     isFailedToLoad = false
                 },
                 onAdFailed = {
-                    isFailedToLoad = true
+                    // Only mark as failed if no existing ad is cached/displayed
+                    if (nativeAd == null) {
+                        isFailedToLoad = true
+                    }
                 }
             )
         }
     }
 
-    if (nativeAd != null && !isFailedToLoad) {
+    if (nativeAd != null) {
         Box(
             modifier = modifier
                 .fillMaxWidth()
@@ -103,6 +117,102 @@ fun NativeAdCard(
                     }
                 }
             )
+        }
+    } else if (!isFailedToLoad) {
+        // Reserved placeholder space to prevent layout jump while ad is loading
+        NativeAdPlaceholder(modifier = modifier)
+    }
+}
+
+@Composable
+private fun NativeAdPlaceholder(modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(20.dp))
+            .background(BgCard)
+            .border(1.dp, BorderWhite5, RoundedCornerShape(20.dp))
+            .padding(14.dp)
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            // Header Row: SPONSORED badge + advertiser placeholder
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(Color(0xFF15233D))
+                        .border(1.dp, Color(0x3338BDF8), RoundedCornerShape(4.dp))
+                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                ) {
+                    Text(
+                        text = "SPONSORED",
+                        color = LightBlue,
+                        fontSize = 9.sp,
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                Box(
+                    modifier = Modifier
+                        .width(100.dp)
+                        .height(10.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(Color.White.copy(alpha = 0.05f))
+                )
+            }
+
+            // Body Row: Icon + Headline & text lines
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(44.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(BgDeep)
+                )
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth(0.85f)
+                            .height(12.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(Color.White.copy(alpha = 0.08f))
+                    )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth(0.6f)
+                            .height(10.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(Color.White.copy(alpha = 0.04f))
+                    )
+                }
+            }
+
+            // CTA Button placeholder
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(38.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(Color(0xFF0284C7).copy(alpha = 0.25f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "PROMOTED OPPORTUNITY",
+                    color = LightBlue.copy(alpha = 0.7f),
+                    fontSize = 10.sp,
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Bold
+                )
+            }
         }
     }
 }
@@ -183,7 +293,7 @@ private fun createNativeAdView(context: Context): NativeAdView {
     // Ad Icon
     val iconView = ImageView(context).apply {
         id = View.generateViewId()
-        layoutParams = LinearLayout.LayoutParams(dpToPx(context, 48), dpToPx(context, 48)).apply {
+        layoutParams = LinearLayout.LayoutParams(dpToPx(context, 46), dpToPx(context, 46)).apply {
             rightMargin = dpToPx(context, 12)
         }
         val bgDrawable = android.graphics.drawable.GradientDrawable().apply {
@@ -276,11 +386,11 @@ private fun createNativeAdView(context: Context): NativeAdView {
 
 private fun populateNativeAdView(nativeAd: NativeAd, nativeAdView: NativeAdView) {
     // Headline
-    (nativeAdView.headlineView as? TextView)?.text = nativeAd.headline
+    (nativeAdView.headlineView as? TextView)?.text = nativeAd.headline ?: "Promoted Opportunity"
 
     // Body
     val body = nativeAd.body
-    if (body != null) {
+    if (!body.isNullOrBlank()) {
         nativeAdView.bodyView?.visibility = View.VISIBLE
         (nativeAdView.bodyView as? TextView)?.text = body
     } else {
@@ -289,7 +399,7 @@ private fun populateNativeAdView(nativeAd: NativeAd, nativeAdView: NativeAdView)
 
     // Advertiser or Store
     val advertiser = nativeAd.advertiser ?: nativeAd.store
-    if (advertiser != null) {
+    if (!advertiser.isNullOrBlank()) {
         nativeAdView.advertiserView?.visibility = View.VISIBLE
         (nativeAdView.advertiserView as? TextView)?.text = advertiser
     } else {
@@ -298,29 +408,29 @@ private fun populateNativeAdView(nativeAd: NativeAd, nativeAdView: NativeAdView)
 
     // Icon
     val icon = nativeAd.icon
-    if (icon != null) {
+    if (icon != null && icon.drawable != null) {
         nativeAdView.iconView?.visibility = View.VISIBLE
         (nativeAdView.iconView as? ImageView)?.setImageDrawable(icon.drawable)
     } else {
         nativeAdView.iconView?.visibility = View.GONE
     }
 
-    // Media View
+    // Media View: only show if ad has video or image media
     val mediaContent = nativeAd.mediaContent
-    if (mediaContent != null) {
+    val hasMedia = mediaContent != null && (mediaContent.hasVideoContent() || mediaContent.aspectRatio > 0.1f || nativeAd.images.isNotEmpty())
+    if (hasMedia) {
         nativeAdView.mediaView?.visibility = View.VISIBLE
         nativeAdView.mediaView?.mediaContent = mediaContent
     } else {
         nativeAdView.mediaView?.visibility = View.GONE
     }
 
-    // Call to action
+    // Call to action button
     val cta = nativeAd.callToAction
-    if (cta != null) {
-        nativeAdView.callToActionView?.visibility = View.VISIBLE
-        (nativeAdView.callToActionView as? Button)?.text = cta
-    } else {
-        nativeAdView.callToActionView?.visibility = View.GONE
+    val ctaBtn = nativeAdView.callToActionView as? Button
+    if (ctaBtn != null) {
+        ctaBtn.text = if (!cta.isNullOrBlank()) cta else "VIEW OPPORTUNITY"
+        ctaBtn.visibility = View.VISIBLE
     }
 
     nativeAdView.setNativeAd(nativeAd)

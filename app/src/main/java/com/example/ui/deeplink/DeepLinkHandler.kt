@@ -26,6 +26,7 @@ sealed class DeepLinkTarget {
     object Disclaimer : DeepLinkTarget()
     object PrivacyPolicy : DeepLinkTarget()
     object Stories : DeepLinkTarget()
+    data class StoryDetail(val storySlug: String) : DeepLinkTarget()
     object UserAuth : DeepLinkTarget()
     data class UserProfile(val userId: String? = null) : DeepLinkTarget()
     object UserJobInput : DeepLinkTarget()
@@ -37,6 +38,9 @@ sealed class DeepLinkTarget {
  * and navigates to the appropriate destination in AppViewModel.
  */
 object DeepLinkHandler {
+
+    private var lastHandledUri: String? = null
+    private var lastHandledTime: Long = 0L
 
     /**
      * Parses an incoming [Uri] into a typed [DeepLinkTarget].
@@ -78,16 +82,22 @@ object DeepLinkHandler {
                 DeepLinkTarget.UserProfile(userId)
             }
             "post-job" -> DeepLinkTarget.UserJobInput
-            "stories", "story" -> DeepLinkTarget.Stories
+            "stories", "story" -> {
+                val querySlug = uri.getQueryParameter("slug") ?: uri.getQueryParameter("id") ?: uri.getQueryParameter("storyId")
+                val slug = if (!second.isNullOrBlank()) second else querySlug
+                if (!slug.isNullOrBlank()) {
+                    DeepLinkTarget.StoryDetail(slug)
+                } else {
+                    DeepLinkTarget.Stories
+                }
+            }
             "market" -> {
                 // Format: /market/{slug}
-                // Can be a job link like /market/procurement-services-logistics-officer-noa-gva-job-mvrscaw2l4ve
+                // Can be a job link like /market/accountant-job-mw61pjcs3qji
+                // or /market/procurement-services-logistics-officer-noa-gva-job-mvrscaw2l4ve
                 // or a market report slug like /market/annual-tech-report
                 if (!second.isNullOrBlank()) {
-                    if (second.contains("-job-")) {
-                        val extractedJobId = second.substringAfterLast("-job-")
-                        DeepLinkTarget.JobDetail(extractedJobId)
-                    } else if (second.startsWith("job-")) {
+                    if (second.contains("-job-") || second.startsWith("job-")) {
                         DeepLinkTarget.JobDetail(second)
                     } else {
                         DeepLinkTarget.ReportDetail(second)
@@ -168,25 +178,7 @@ object DeepLinkHandler {
             is DeepLinkTarget.JobDetail -> {
                 val id = target.jobId
                 if (!id.isNullOrBlank()) {
-                    val existing = viewModel.activeJobs.find {
-                        it.id.equals(id, ignoreCase = true) ||
-                        it.id.endsWith(id, ignoreCase = true) ||
-                        id.endsWith(it.id, ignoreCase = true)
-                    } ?: viewModel.savedJobs.find {
-                        it.id.equals(id, ignoreCase = true) ||
-                        it.id.endsWith(id, ignoreCase = true) ||
-                        id.endsWith(it.id, ignoreCase = true)
-                    }
-                    if (existing != null) {
-                        viewModel.selectJob(existing)
-                    } else {
-                        val placeholder = JobOpportunity(
-                            id = id,
-                            title = "Job Details",
-                            company = "JobsReport"
-                        )
-                        viewModel.selectJob(placeholder)
-                    }
+                    viewModel.openJobBySlugOrId(id)
                 } else {
                     viewModel.navigateTo(NavRoute.ALL_JOBS)
                 }
@@ -237,7 +229,11 @@ object DeepLinkHandler {
                 viewModel.navigateTo(NavRoute.PRIVACY_POLICY)
             }
             is DeepLinkTarget.Stories -> {
+                viewModel.viewingStory = null
                 viewModel.navigateTo(NavRoute.STORIES)
+            }
+            is DeepLinkTarget.StoryDetail -> {
+                viewModel.openStoryBySlugOrId(target.storySlug)
             }
             is DeepLinkTarget.UserAuth -> {
                 viewModel.navigateTo(NavRoute.USER_AUTH)
@@ -262,12 +258,20 @@ object DeepLinkHandler {
     /**
      * Handles an incoming intent:
      * - Safely ignores intents with no data (normal app launch without crashing).
+     * - Debounces duplicate intent handling within 1.5 seconds.
      * - Parses and routes the intent if valid.
      *
      * @return true if an App Link deep link was successfully handled, false otherwise.
      */
     fun handle(intent: Intent?, viewModel: AppViewModel): Boolean {
         val data = intent?.data ?: return false
+        val uriStr = data.toString().trim()
+        val now = System.currentTimeMillis()
+        if (uriStr == lastHandledUri && (now - lastHandledTime) < 1500L) {
+            return true
+        }
+        lastHandledUri = uriStr
+        lastHandledTime = now
         val target = parseUri(data)
         applyTarget(target, viewModel)
         return true

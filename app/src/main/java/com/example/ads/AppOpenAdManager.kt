@@ -65,6 +65,11 @@ class AppOpenAdManager(private val application: Application) :
     }
 
     fun showAdIfAvailable(activity: Activity, onShowComplete: () -> Unit = {}) {
+        if (activity.isFinishing || activity.isDestroyed) {
+            onShowComplete()
+            return
+        }
+
         if (!AdStateManager.canShowAppOpen()) {
             Log.d(TAG, "Cannot show App Open ad: another ad is currently showing")
             onShowComplete()
