@@ -424,6 +424,12 @@ fun JobsListScreen(viewModel: AppViewModel) {
                         )
                     }
                 }
+                if (paginatedJobs.size == 1) {
+                    NativeAdCard(
+                        adUnitId = AdConfig.getNativeAdUnitId(1),
+                        slotKey = "jobs_list_ad_single"
+                    )
+                }
             }
         }
 

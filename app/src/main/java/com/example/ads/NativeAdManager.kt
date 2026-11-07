@@ -166,21 +166,38 @@ object NativeAdManager {
      */
     fun prewarmCoreSlots(context: Context) {
         val coreSlots = listOf(
+            // Home Feed
             Pair("home_feed_ad_0", AdConfig.getNativeAdUnitId(0)),
             Pair("home_feed_ad_1", AdConfig.getNativeAdUnitId(1)),
             Pair("home_feed_ad_2", AdConfig.getNativeAdUnitId(2)),
             Pair("home_feed_ad_3", AdConfig.getNativeAdUnitId(3)),
             Pair("home_feed_ad_4", AdConfig.getNativeAdUnitId(4)),
+            // Job Details
             Pair("job_detail_ad_0", AdConfig.getNativeAdUnitId(0)),
             Pair("job_detail_ad_1", AdConfig.getNativeAdUnitId(1)),
             Pair("job_detail_ad_2", AdConfig.getNativeAdUnitId(2)),
             Pair("job_detail_ad_3", AdConfig.getNativeAdUnitId(3)),
             Pair("job_detail_ad_4", AdConfig.getNativeAdUnitId(4)),
-            Pair("career_redirect_native_ad", AdConfig.PROD_NATIVE_UNIT_1)
+            // Career Redirect
+            Pair("career_redirect_native_ad", AdConfig.PROD_NATIVE_UNIT_1),
+            // All Stories Page & Story Reel
+            Pair("all_stories_grid_0", AdConfig.getNativeAdUnitId(0)),
+            Pair("all_stories_grid_1", AdConfig.getNativeAdUnitId(1)),
+            Pair("home_story_reel_pos3", AdConfig.PROD_NATIVE_UNIT_1),
+            // Companies Page (Directory & Profile/Jobs)
+            Pair("company_dir_ad_2", AdConfig.getNativeAdUnitId(1)),
+            Pair("company_dir_ad_5", AdConfig.getNativeAdUnitId(2)),
+            Pair("company_detail_top_ad", AdConfig.getNativeAdUnitId(0)),
+            Pair("company_detail_bottom_ad", AdConfig.getNativeAdUnitId(1)),
+            Pair("company_job_ad_2", AdConfig.getNativeAdUnitId(2)),
+            // Jobs List Screen
+            Pair("jobs_list_ad_1", AdConfig.getNativeAdUnitId(1)),
+            Pair("jobs_list_ad_3", AdConfig.getNativeAdUnitId(2)),
+            Pair("jobs_list_ad_5", AdConfig.getNativeAdUnitId(3))
         )
 
         coreSlots.forEachIndexed { idx, (slot, unit) ->
-            // Stagger prewarm requests slightly (150ms) to prevent burst throttling on cold start
+            // Stagger prewarm requests slightly (120ms) to prevent burst throttling on cold start
             mainHandler.postDelayed({
                 loadAdForSlot(
                     context = context,
@@ -189,7 +206,7 @@ object NativeAdManager {
                     onAdReady = { Log.d(TAG, "Prewarmed ad ready for slot: $slot") },
                     onAdFailed = { Log.d(TAG, "Prewarm failed for slot: $slot") }
                 )
-            }, (idx * 150L))
+            }, (idx * 120L))
         }
     }
 }

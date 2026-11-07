@@ -741,6 +741,12 @@ fun CompaniesScreen(viewModel: AppViewModel) {
                             )
                         }
                     }
+                    if (paginatedCompanies.size in 1..2) {
+                        NativeAdCard(
+                            adUnitId = AdConfig.getNativeAdUnitId(1),
+                            slotKey = "company_dir_ad_fallback"
+                        )
+                    }
                 }
 
                 // Pagination Controls

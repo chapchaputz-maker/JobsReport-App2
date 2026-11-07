@@ -119,7 +119,7 @@ fun StoryReelAdCard(
         }
     }
 
-    if (nativeAd != null && !isFailed) {
+    if (nativeAd != null) {
         Box(
             modifier = modifier
                 .width(115.dp)
@@ -140,6 +140,58 @@ fun StoryReelAdCard(
                         populateReelNativeAdView(ad, view)
                     }
                 }
+            )
+        }
+    } else if (!isFailed) {
+        StoryReelAdPlaceholder(modifier = modifier)
+    }
+}
+
+@Composable
+private fun StoryReelAdPlaceholder(modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .width(115.dp)
+            .height(210.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(Color(0xFF0B1120))
+            .border(1.dp, Color(0xFF1E293B), RoundedCornerShape(16.dp))
+            .padding(10.dp)
+    ) {
+        Column(
+            modifier = Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .size(24.dp)
+                        .clip(CircleShape)
+                        .background(Color.White.copy(alpha = 0.08f))
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(Color(0xFF15233D))
+                        .padding(horizontal = 4.dp, vertical = 2.dp)
+                ) {
+                    Text(
+                        text = "Ad",
+                        color = Color(0xFF38BDF8),
+                        fontSize = 8.sp,
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(26.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(Color(0xFF1877F2).copy(alpha = 0.25f))
             )
         }
     }
@@ -374,7 +426,7 @@ fun StoryGridAdCard(
         }
     }
 
-    if (nativeAd != null && !isFailed) {
+    if (nativeAd != null) {
         Box(
             modifier = modifier
                 .fillMaxWidth()
@@ -396,6 +448,94 @@ fun StoryGridAdCard(
                     }
                 }
             )
+        }
+    } else if (!isFailed) {
+        StoryGridAdPlaceholder(modifier = modifier)
+    }
+}
+
+@Composable
+private fun StoryGridAdPlaceholder(modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .aspectRatio(9f / 16f)
+            .clip(RoundedCornerShape(16.dp))
+            .background(Color(0xFF0F172A))
+            .border(1.dp, Color(0xFF1E293B), RoundedCornerShape(16.dp))
+            .padding(10.dp)
+    ) {
+        Column(
+            modifier = Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(28.dp)
+                        .clip(CircleShape)
+                        .background(Color.White.copy(alpha = 0.08f))
+                )
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(Color(0xFF15233D))
+                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                ) {
+                    Text(
+                        text = "SPONSORED",
+                        color = Color(0xFF38BDF8),
+                        fontSize = 8.5.sp,
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .padding(vertical = 8.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(Color.White.copy(alpha = 0.04f))
+            )
+
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth(0.85f)
+                        .height(12.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(Color.White.copy(alpha = 0.08f))
+                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth(0.6f)
+                        .height(10.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(Color.White.copy(alpha = 0.04f))
+                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(30.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color(0xFF1877F2).copy(alpha = 0.3f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "VIEW STORY",
+                        color = Color(0xFF38BDF8),
+                        fontSize = 9.sp,
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
         }
     }
 }
