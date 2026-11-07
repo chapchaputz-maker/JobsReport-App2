@@ -25,32 +25,18 @@ android {
   signingConfigs {
     create("release") {
       val keystorePath = System.getenv("KEYSTORE_PATH")
-      if (!keystorePath.isNullOrBlank() && file(keystorePath).exists()) {
-        storeFile = file(keystorePath)
-        storePassword = System.getenv("STORE_PASSWORD") ?: "52775277Tanzania"
-        keyAlias = System.getenv("KEY_ALIAS") ?: "upload"
-        keyPassword = System.getenv("KEY_PASSWORD") ?: "52775277Tanzania"
-      } else if (file("${rootDir}/upload-key.jks").exists()) {
-        storeFile = file("${rootDir}/upload-key.jks")
-        storePassword = System.getenv("STORE_PASSWORD") ?: "52775277Tanzania"
-        keyAlias = System.getenv("KEY_ALIAS") ?: "upload"
-        keyPassword = System.getenv("KEY_PASSWORD") ?: "52775277Tanzania"
-      } else if (file("${rootDir}/my-upload-key.jks").exists()) {
-        storeFile = file("${rootDir}/my-upload-key.jks")
-        storePassword = System.getenv("STORE_PASSWORD") ?: "52775277Tanzania"
-        keyAlias = System.getenv("KEY_ALIAS") ?: "upload"
-        keyPassword = System.getenv("KEY_PASSWORD") ?: "52775277Tanzania"
-      } else if (file("${rootDir}/release.keystore").exists()) {
-        storeFile = file("${rootDir}/release.keystore")
-        storePassword = System.getenv("STORE_PASSWORD") ?: "52775277Tanzania"
-        keyAlias = System.getenv("KEY_ALIAS") ?: "upload"
-        keyPassword = System.getenv("KEY_PASSWORD") ?: "52775277Tanzania"
-      } else {
-        storeFile = file("${rootDir}/debug.keystore")
-        storePassword = "android"
-        keyAlias = "androiddebugkey"
-        keyPassword = "android"
+      val resolvedKeystore = when {
+        !keystorePath.isNullOrBlank() && file(keystorePath).exists() -> file(keystorePath)
+        file("${rootDir}/upload-key.jks").exists() -> file("${rootDir}/upload-key.jks")
+        file("${rootDir}/my-upload-key.jks").exists() -> file("${rootDir}/my-upload-key.jks")
+        file("${rootDir}/release.keystore").exists() -> file("${rootDir}/release.keystore")
+        else -> file("${rootDir}/upload-key.jks")
       }
+      storeFile = resolvedKeystore
+      storeType = "PKCS12"
+      storePassword = System.getenv("STORE_PASSWORD") ?: System.getenv("KEYSTORE_PASSWORD") ?: "52775277"
+      keyAlias = System.getenv("KEY_ALIAS") ?: "upload"
+      keyPassword = System.getenv("KEY_PASSWORD") ?: System.getenv("STORE_PASSWORD") ?: "52775277"
     }
     create("debugConfig") {
       storeFile = file("${rootDir}/debug.keystore")

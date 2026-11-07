@@ -56,7 +56,7 @@ jobs:
       - name: Resolve, Generate, or Reuse Upload Keystore
         id: setup-keystore
         run: |
-          KEY_SOURCE="generated"
+          KEY_SOURCE="provided"
           if [ -n "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" ]; then
             echo "Using base64 keystore from secrets.RELEASE_KEYSTORE_BASE64..."
             echo "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" | base64 --decode > upload-key.jks
@@ -77,22 +77,13 @@ jobs:
             cp release.keystore upload-key.jks
             KEY_SOURCE="repository file (release.keystore)"
           else
-            echo "No existing keystore secret or file found. Generating new upload keystore..."
-            keytool -genkeypair -v \
-              -keystore upload-key.jks \
-              -alias "${KEY_ALIAS}" \
-              -keyalg RSA \
-              -keysize 2048 \
-              -validity 10000 \
-              -storepass "${STORE_PASSWORD}" \
-              -keypass "${KEY_PASSWORD}" \
-              -dname "CN=JobsReport, OU=App, O=JobsReport, L=Dar es Salaam, ST=Dar es Salaam, C=TZ"
-            KEY_SOURCE="newly generated (SAVE THIS KEY!)"
+            echo "::error::Release keystore not found! Please add repository secret 'KEYSTORE_BASE64' or commit 'upload-key.jks' into the repository root. Automatic generation of random keystores is disabled to ensure Google Play upload key consistency."
+            exit 1
           fi
 
           # Ensure the file exists and is non-empty
           if [ ! -s "upload-key.jks" ]; then
-            echo "::error::Failed to obtain or generate upload-key.jks!"
+            echo "::error::Keystore file upload-key.jks is empty or missing!"
             exit 1
           fi
 
@@ -114,8 +105,8 @@ jobs:
           echo "keystore_source=$KEY_SOURCE" >> $GITHUB_OUTPUT
         env:
           KEY_ALIAS: ${{ secrets.KEY_ALIAS || 'upload' }}
-          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD || secrets.KEYSTORE_PASSWORD || '52775277Tanzania' }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD || '52775277Tanzania' }}
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD || secrets.KEYSTORE_PASSWORD || '52775277' }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD || secrets.STORE_PASSWORD || '52775277' }}
 
       - name: Verify Certificate Fingerprints & Keystore Pair
         id: verify-certs
@@ -124,6 +115,9 @@ jobs:
           echo "VERIFYING KEYSTORE & PEM CERTIFICATE PAIR"
           echo "=========================================================="
           
+          REQUIRED_SHA1="31:C0:26:E2:8B:BC:17:6F:FA:CD:D7:DF:DC:77:7B:9C:52:71:F8:6E"
+          REQUIRED_SHA256="CC:73:C0:02:A8:C6:15:F8:07:2F:9F:B5:5E:D6:63:86:09:9A:85:C8:E9:35:1B:B9:9A:70:B0:9F:20:56:D6:FF"
+
           # Extract fingerprints from keystore
           KEYSTORE_LIST=$(keytool -list -v -keystore upload-key.jks -alias "${KEY_ALIAS}" -storepass "${STORE_PASSWORD}")
           KEYSTORE_SHA1=$(echo "$KEYSTORE_LIST" | grep -i "SHA1:" | head -n1 | sed -e 's/.*SHA1: //I' | tr -d ' ')
@@ -138,18 +132,26 @@ jobs:
           echo "Keystore SHA256: $KEYSTORE_SHA256"
           echo "PEM File SHA1:   $PEM_SHA1"
           echo "PEM File SHA256: $PEM_SHA256"
+          echo "Required SHA1:   $REQUIRED_SHA1"
+          echo "Required SHA256: $REQUIRED_SHA256"
 
           if [ "$KEYSTORE_SHA1" != "$PEM_SHA1" ] || [ -z "$KEYSTORE_SHA1" ]; then
             echo "::error::Mismatch between upload-key.jks and upload_certificate.pem!"
             exit 1
           fi
-          echo "Keystore and PEM fingerprints match perfectly!"
+
+          if [ "$KEYSTORE_SHA1" != "$REQUIRED_SHA1" ]; then
+            echo "::error::CRITICAL: Keystore SHA-1 ($KEYSTORE_SHA1) does not match Google Play expected upload key ($REQUIRED_SHA1)!"
+            exit 1
+          fi
+
+          echo "Keystore and PEM fingerprints match Google Play expected certificate perfectly!"
 
           echo "KEYSTORE_SHA1=$KEYSTORE_SHA1" >> $GITHUB_ENV
           echo "KEYSTORE_SHA256=$KEYSTORE_SHA256" >> $GITHUB_ENV
         env:
           KEY_ALIAS: ${{ secrets.KEY_ALIAS || 'upload' }}
-          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD || secrets.KEYSTORE_PASSWORD || '52775277Tanzania' }}
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD || secrets.KEYSTORE_PASSWORD || '52775277' }}
 
       - name: Build Signed Release AAB & Release APK
         run: |
@@ -157,9 +159,9 @@ jobs:
           gradle bundleRelease assembleRelease --stacktrace
         env:
           KEYSTORE_PATH: ${{ env.KEYSTORE_PATH }}
-          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD || secrets.KEYSTORE_PASSWORD || '52775277Tanzania' }}
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD || secrets.KEYSTORE_PASSWORD || '52775277' }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS || 'upload' }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD || '52775277Tanzania' }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD || secrets.STORE_PASSWORD || '52775277' }}
 
       - name: Collect & Validate Built Artifacts
         id: validate-artifacts
@@ -203,6 +205,12 @@ jobs:
 
           echo "APK SHA1: $APK_SHA1"
           echo "AAB SHA1: $AAB_SHA1"
+
+          REQUIRED_SHA1="31:C0:26:E2:8B:BC:17:6F:FA:CD:D7:DF:DC:77:7B:9C:52:71:F8:6E"
+          if [ "$AAB_SHA1" != "$REQUIRED_SHA1" ]; then
+            echo "::error::CRITICAL: Generated AAB is signed with $AAB_SHA1, not expected $REQUIRED_SHA1!"
+            exit 1
+          fi
 
           # Base64 string for easy storage in GitHub Secrets
           KEYSTORE_B64=$(base64 -w 0 "$GITHUB_WORKSPACE/upload-key.jks")
