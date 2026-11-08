@@ -10,6 +10,9 @@ jobs:
   build:
     name: Build, Sign & Export Release Artifacts
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
 
     steps:
       - name: Checkout source code
@@ -77,26 +80,44 @@ jobs:
             cp release.keystore upload-key.jks
             KEY_SOURCE="repository file (release.keystore)"
           else
-            echo "Checking GitHub Actions artifact storage for your saved upload-key.jks..."
-            mkdir -p /tmp/recovered
-            gh run download --name upload-key-jks --dir /tmp/recovered 2>/dev/null || true
-            if [ -s "/tmp/recovered/upload-key.jks" ]; then
-              echo "Found your saved upload-key.jks in GitHub Actions artifacts!"
-              cp /tmp/recovered/upload-key.jks upload-key.jks
-              KEY_SOURCE="recovered from GitHub Actions artifacts"
-            else
-              gh run download --name all-release-files-and-keys --dir /tmp/recovered 2>/dev/null || true
-              if [ -s "/tmp/recovered/upload-key.jks" ]; then
-                echo "Found your saved upload-key.jks in all-release-files-and-keys artifact!"
-                cp /tmp/recovered/upload-key.jks upload-key.jks
-                KEY_SOURCE="recovered from all-release-files-and-keys artifact"
-              fi
-            fi
+            echo "Searching past GitHub Actions workflow runs for the keystore matching 31:C0:26:E2..."
+            REQUIRED_SHA1="31:C0:26:E2:8B:BC:17:6F:FA:CD:D7:DF:DC:77:7B:9C:52:71:F8:6E"
+            FOUND_KEY="false"
 
-            if [ ! -s "upload-key.jks" ]; then
-              echo "::error::CRITICAL: Keystore 'upload-key.jks' was NOT found in your repository or GitHub Secrets!"
-              echo "::error::Automatic generation has been permanently disabled because Google Play only accepts your registered key (SHA-1: 31:C0:26:E2:8B:BC:17:6F:FA:CD:D7:DF:DC:77:7B:9C:52:71:F8:6E)."
-              echo "::error::TO FIX THIS: Open your GitHub repository on github.com, click 'Add file' > 'Upload files', select your 'upload-key.jks' file, and click 'Commit changes'."
+            for RUN_ID in $(gh run list --limit 30 --json databaseId -q '.[].databaseId' 2>/dev/null); do
+              rm -rf /tmp/try_run && mkdir -p /tmp/try_run
+              gh run download "$RUN_ID" --name upload-key-jks --dir /tmp/try_run 2>/dev/null || gh run download "$RUN_ID" --name all-release-files-and-keys --dir /tmp/try_run 2>/dev/null || true
+              if [ -s "/tmp/try_run/upload-key.jks" ]; then
+                TRY_SHA1=$(keytool -list -v -keystore /tmp/try_run/upload-key.jks -alias "${KEY_ALIAS}" -storepass "${STORE_PASSWORD}" 2>/dev/null | grep -i "SHA1:" | head -n1 | sed -e 's/.*SHA1: //I' | tr -d ' ')
+                echo "Checked Run #$RUN_ID -> SHA-1: $TRY_SHA1"
+                if [ "$TRY_SHA1" == "$REQUIRED_SHA1" ]; then
+                  echo "SUCCESS: Found original keystore in Run #$RUN_ID!"
+                  cp /tmp/try_run/upload-key.jks upload-key.jks
+                  KEY_SOURCE="auto-recovered from GitHub Actions Run #$RUN_ID"
+                  FOUND_KEY="true"
+
+                  # Persist to repository so future runs never need to search again
+                  git config user.name "github-actions[bot]"
+                  git config user.email "github-actions[bot]@users.noreply.github.com"
+                  git add upload-key.jks
+                  git commit -m "chore: persist upload-key.jks for Google Play [skip ci]" || true
+                  git push || true
+                  break
+                fi
+              fi
+            done
+
+            if [ "$FOUND_KEY" != "true" ] || [ ! -s "upload-key.jks" ]; then
+              echo "::error::=========================================================================="
+              echo "::error::CRITICAL: Keystore with SHA-1 $REQUIRED_SHA1 was not found in past runs or repository."
+              echo "::error::Automatic generation has been permanently disabled because Google Play only accepts your registered key."
+              echo "::error::TO FIX THIS:"
+              echo "::error::1. Go to your repository on github.com (JobsReport-App2)."
+              echo "::error::2. Click 'Add file' > 'Upload files'."
+              echo "::error::3. Upload your 'upload-key.jks' file (from your Downloads folder)."
+              echo "::error::4. Click 'Commit changes'."
+              echo "::error::Then re-run this workflow and it will build successfully!"
+              echo "::error::=========================================================================="
               exit 1
             fi
           fi
