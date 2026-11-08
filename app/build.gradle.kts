@@ -30,13 +30,12 @@ android {
         file("${rootDir}/upload-key.jks").exists() -> file("${rootDir}/upload-key.jks")
         file("${rootDir}/my-upload-key.jks").exists() -> file("${rootDir}/my-upload-key.jks")
         file("${rootDir}/release.keystore").exists() -> file("${rootDir}/release.keystore")
-        else -> file("${rootDir}/upload-key.jks")
+        else -> file("${rootDir}/debug.keystore")
       }
       storeFile = resolvedKeystore
-      storeType = "PKCS12"
-      storePassword = System.getenv("STORE_PASSWORD") ?: System.getenv("KEYSTORE_PASSWORD") ?: "52775277"
-      keyAlias = System.getenv("KEY_ALIAS") ?: "upload"
-      keyPassword = System.getenv("KEY_PASSWORD") ?: System.getenv("STORE_PASSWORD") ?: "52775277"
+      storePassword = System.getenv("STORE_PASSWORD") ?: System.getenv("KEYSTORE_PASSWORD") ?: "52775277Tanzania"
+      keyAlias = System.getenv("KEY_ALIAS") ?: (if (resolvedKeystore.name.contains("debug")) "androiddebugkey" else "upload")
+      keyPassword = System.getenv("KEY_PASSWORD") ?: System.getenv("STORE_PASSWORD") ?: (if (resolvedKeystore.name.contains("debug")) "android" else "52775277Tanzania")
     }
     create("debugConfig") {
       storeFile = file("${rootDir}/debug.keystore")
