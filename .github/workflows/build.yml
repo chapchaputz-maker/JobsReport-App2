@@ -84,6 +84,7 @@ jobs:
               -keyalg RSA \
               -keysize 2048 \
               -validity 10000 \
+              -storetype PKCS12 \
               -storepass "${STORE_PASSWORD}" \
               -keypass "${KEY_PASSWORD}" \
               -dname "CN=JobsReport, OU=App, O=JobsReport, L=Dar es Salaam, ST=Dar es Salaam, C=TZ"

@@ -33,6 +33,7 @@ android {
         else -> file("${rootDir}/debug.keystore")
       }
       storeFile = resolvedKeystore
+      storeType = "PKCS12"
       storePassword = System.getenv("STORE_PASSWORD") ?: System.getenv("KEYSTORE_PASSWORD") ?: "52775277Tanzania"
       keyAlias = System.getenv("KEY_ALIAS") ?: (if (resolvedKeystore.name.contains("debug")) "androiddebugkey" else "upload")
       keyPassword = System.getenv("KEY_PASSWORD") ?: System.getenv("STORE_PASSWORD") ?: (if (resolvedKeystore.name.contains("debug")) "android" else "52775277Tanzania")
